@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
 	"github.com/igomez10/shelley/pkg/tokenizer"
@@ -22,21 +23,33 @@ func GetCmd() *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			fmt.Println("Tokenizing input...")
-			if cmd.Reader == nil {
-				return fmt.Errorf("no input provided")
+			var cmdInput []byte
+			if cmd.NArg() > 0 {
+				b := strings.Builder{}
+				for i, arg := range cmd.Args().Slice() {
+					b.WriteString(arg + " ")
+					if i%1000 == 0 {
+						fmt.Printf("Processed %d arguments...\n", i)
+					}
+				}
+				cmdInput = []byte(b.String()[:b.Len()-1]) // Remove trailing space
+			} else {
+				if cmd.Reader == nil {
+					return fmt.Errorf("no input provided")
+				}
+				input, err := io.ReadAll(cmd.Reader)
+				if err != nil {
+					return err
+				}
+				cmdInput = input
 			}
 			tkn := tokenizer.New()
-			input, err := io.ReadAll(cmd.Reader)
-			if err != nil {
-				return err
-			}
-			tkn.Encode(string(input))
+			tkn.Encode(string(cmdInput))
 
-			if cmd.Bool(flags.VerboseFlag.Name) {
-				encoded := tkn.Encode(string(input))
-				decoded := tkn.Decode(encoded)
-				fmt.Printf("Encoded: \n%v\n", encoded)
-				fmt.Printf("Decoded: \n%s\n", decoded)
+			isVerbose := cmd.Bool(flags.VerboseFlag.Name)
+			if isVerbose {
+				fmt.Print("Verbose mode enabled. Tokenizing input: \n")
+				fmt.Printf("there are %d tokens in the input\n", len(tkn.StringToIntSlice))
 			}
 
 			return nil
