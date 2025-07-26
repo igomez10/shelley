@@ -1,1 +1,3 @@
 cli
+data/*
+.DS_Store
