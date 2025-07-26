@@ -17,7 +17,6 @@ func GetCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "tokenize",
 		Aliases:   []string{"to"},
-		Category:  "motion",
 		Usage:     "tokenize the input",
 		UsageText: "tokenize - does the tokenizing",
 		Flags: []cli.Flag{
