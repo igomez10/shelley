@@ -59,12 +59,10 @@ func (t *Tokenizer) Encode(input string) []int {
 		slog.Info("[Encode] End encoding input.")
 	}()
 	splitted := strings.Split(input, " ")
-	slog.Info("Start converting input to int slice...")
 	res := make([]int, len(splitted))
 	for i := range splitted {
 		res[i] = t.StringToInt[splitted[i]]
 	}
-	slog.Info("Conversion complete.")
 
 	return res
 }
@@ -94,9 +92,9 @@ func (t *Tokenizer) Init(input string, out io.Writer) {
 	t.IntToString = map[int][]byte{}
 	splitted := strings.Split(input, " ")
 	t.StringToIntSlice = splitted
-	slog.Info("Start sorting tokens...")
+	slog.Debug("Start sorting tokens...")
 	t.StringToIntSlice = sort.StringSlice(t.StringToIntSlice)
-	slog.Info("Tokens sorted.")
+	slog.Debug("Tokens sorted.")
 	errgroup, _ := errgroup.WithContext(context.Background())
 	errgroup.SetLimit(10) // Limit concurrency to 10 goroutines
 
@@ -106,7 +104,7 @@ func (t *Tokenizer) Init(input string, out io.Writer) {
 			currentWord := t.StringToIntSlice[i]
 			t.StringToInt[currentWord] = i
 		}
-		slog.Info("string to int mappings created.")
+		slog.Debug("string to int mappings created.")
 		return nil
 	})
 	errgroup.Go(func() error {
@@ -115,7 +113,7 @@ func (t *Tokenizer) Init(input string, out io.Writer) {
 			currentWord := t.StringToIntSlice[i]
 			t.IntToString[i] = []byte(currentWord)
 		}
-		slog.Info("int to string mappings created.")
+		slog.Debug("int to string mappings created.")
 		return nil
 	})
 	if err := errgroup.Wait(); err != nil {
