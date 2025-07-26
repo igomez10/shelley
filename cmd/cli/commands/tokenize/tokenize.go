@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
@@ -44,16 +45,20 @@ func GetCmd() *cli.Command {
 				}
 				cmdInput = input
 			}
-			tkn := tokenizer.New()
-			slog.Info("Encoding input...")
-			tkn.Encode(string(cmdInput))
-			slog.Info("Tokenization complete.")
 
-			isVerbose := cmd.Bool(flags.VerboseFlag.Name)
-			if isVerbose {
-				fmt.Print("Verbose mode enabled. Tokenizing input: \n")
-				fmt.Printf("there are %d tokens in the input\n", len(tkn.StringToIntSlice))
+			slog.Info("Creating new tokenizer...")
+			gobfile, err := os.Open("/tmp/tokenizer.gob")
+			if err != nil {
+				return fmt.Errorf("failed to open tokenizer file: %w", err)
 			}
+			tkn, err := tokenizer.NewFromFile(gobfile)
+			if err != nil {
+				return fmt.Errorf("failed to load tokenizer: %w", err)
+			}
+			slog.Info("Encoding input...")
+			res := tkn.Encode(string(cmdInput))
+			slog.Info("Tokenization complete.")
+			fmt.Println("Tokenized output:", res)
 
 			return nil
 		},

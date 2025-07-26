@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	initcmd "github.com/igomez10/shelley/cmd/cli/commands/init"
 	"github.com/igomez10/shelley/cmd/cli/commands/tokenize"
 	"github.com/urfave/cli/v3"
 )
@@ -18,6 +19,7 @@ func main() {
 		ArgsUsage: "[args and such]",
 		Commands: []*cli.Command{
 			tokenize.GetCmd(),
+			initcmd.GetCmd(),
 		},
 	}
 

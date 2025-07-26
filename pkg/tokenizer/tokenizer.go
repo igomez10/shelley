@@ -2,6 +2,8 @@ package tokenizer
 
 import (
 	"context"
+	"encoding/gob"
+	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -9,8 +11,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func New() *tokenizer {
-	t := &tokenizer{
+func New() *Tokenizer {
+	t := &Tokenizer{
 		StringToInt:      map[string]int{},
 		StringToIntSlice: []string{},
 		IntToString:      map[int][]byte{},
@@ -18,13 +20,78 @@ func New() *tokenizer {
 	return t
 }
 
-type tokenizer struct {
+func NewWithData(stringToInt map[string]int, stringToIntSlice []string, intToString map[int][]byte) *Tokenizer {
+	slog.Info("[NewWithData] Start creating tokenizer with provided data...")
+	defer func() {
+		slog.Info("[NewWithData] Tokenizer created with provided data.")
+	}()
+
+	t := &Tokenizer{
+		StringToInt:      stringToInt,
+		StringToIntSlice: stringToIntSlice,
+		IntToString:      intToString,
+	}
+	return t
+}
+
+func NewFromFile(reader io.Reader) (*Tokenizer, error) {
+	slog.Info("[NewFromFile] Start loading tokenizer from file...")
+	defer func() {
+		slog.Info("[NewFromFile] End loading tokenizer from file.")
+	}()
+	var t Tokenizer
+	gobDecoder := gob.NewDecoder(reader)
+	if err := gobDecoder.Decode(&t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+type Tokenizer struct {
 	StringToInt      map[string]int
 	StringToIntSlice []string
 	IntToString      map[int][]byte
 }
 
-func (t *tokenizer) Encode(input string) []int {
+func (t *Tokenizer) Encode(input string) []int {
+	slog.Info("[Encode] Start encoding input...")
+	defer func() {
+		slog.Info("[Encode] Input encoding complete.")
+	}()
+	splitted := strings.Split(input, " ")
+	slog.Info("Start converting input to int slice...")
+	res := make([]int, len(splitted))
+	for i := range splitted {
+		res[i] = t.StringToInt[splitted[i]]
+	}
+	slog.Info("Conversion complete.")
+
+	return res
+}
+
+func (t *Tokenizer) Decode(input []int) string {
+	res := strings.Builder{}
+	for i := range input {
+		if word, ok := t.IntToString[input[i]]; !ok {
+			res.Write([]byte("<unk>"))
+		} else {
+			res.Write([]byte(word))
+		}
+		if i != len(input)-1 {
+			res.Write([]byte(" "))
+		}
+	}
+	return res.String()
+}
+
+func (t *Tokenizer) Init(input string, out io.Writer) {
+	slog.Info("[Init] Initializing tokenizer...")
+	defer func() {
+		slog.Info("[Init] Tokenizer initialized.")
+	}()
+	t.StringToInt = map[string]int{}
+	t.StringToIntSlice = []string{}
+	t.IntToString = map[int][]byte{}
 	splitted := strings.Split(input, " ")
 	t.StringToIntSlice = splitted
 	slog.Info("Start sorting tokens...")
@@ -53,30 +120,14 @@ func (t *tokenizer) Encode(input string) []int {
 	})
 	if err := errgroup.Wait(); err != nil {
 		slog.Error("Error creating mappings", "error", err)
-		return nil
+		panic(err)
 	}
 
-	slog.Info("Start converting input to int slice...")
-	res := make([]int, len(splitted))
-	for i := range len(splitted) {
-		res[i] = t.StringToInt[splitted[i]]
-	}
-	slog.Info("Conversion complete.")
-
-	return res
-}
-
-func (t *tokenizer) Decode(input []int) string {
-	res := strings.Builder{}
-	for i := range input {
-		if word, ok := t.IntToString[input[i]]; !ok {
-			res.Write([]byte("<unk>"))
-		} else {
-			res.Write([]byte(word))
-		}
-		if i != len(input)-1 {
-			res.Write([]byte(" "))
+	if out != nil {
+		gobEncoder := gob.NewEncoder(out)
+		if err := gobEncoder.Encode(t); err != nil {
+			slog.Error("Error saving tokenizer to file", "error", err)
+			panic(err)
 		}
 	}
-	return res.String()
 }
