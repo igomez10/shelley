@@ -54,6 +54,9 @@ func GetCmd() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load tokenizer: %w", err)
 			}
+			if tkn.Trie == nil {
+				panic("Trie is nil in tokenizer")
+			}
 			slog.Info("Encoding input...")
 			res := tkn.Encode(string(cmdInput))
 			slog.Info("Tokenization complete.")
