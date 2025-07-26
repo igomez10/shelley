@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
@@ -22,14 +23,14 @@ func GetCmd() *cli.Command {
 			flags.VerboseFlag,
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			fmt.Println("Tokenizing input...")
+			slog.Info("Tokenizing input...")
 			var cmdInput []byte
 			if cmd.NArg() > 0 {
 				b := strings.Builder{}
 				for i, arg := range cmd.Args().Slice() {
 					b.WriteString(arg + " ")
 					if i%1000 == 0 {
-						fmt.Printf("Processed %d arguments...\n", i)
+						slog.Info("Processed arguments...", slog.Int("count", i+1))
 					}
 				}
 				cmdInput = []byte(b.String()[:b.Len()-1]) // Remove trailing space
@@ -44,7 +45,9 @@ func GetCmd() *cli.Command {
 				cmdInput = input
 			}
 			tkn := tokenizer.New()
+			slog.Info("Encoding input...")
 			tkn.Encode(string(cmdInput))
+			slog.Info("Tokenization complete.")
 
 			isVerbose := cmd.Bool(flags.VerboseFlag.Name)
 			if isVerbose {
