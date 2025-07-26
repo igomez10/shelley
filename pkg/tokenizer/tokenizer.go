@@ -1,9 +1,12 @@
 package tokenizer
 
 import (
+	"context"
 	"log/slog"
 	"sort"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
 
 func New() *tokenizer {
@@ -27,18 +30,31 @@ func (t *tokenizer) Encode(input string) []int {
 	slog.Info("Start sorting tokens...")
 	t.StringToIntSlice = sort.StringSlice(t.StringToIntSlice)
 	slog.Info("Tokens sorted.")
-	slog.Info("Start creating string to int mappings...")
-	for i := range t.StringToIntSlice {
-		currentWord := t.StringToIntSlice[i]
-		t.StringToInt[currentWord] = i
+	errgroup, _ := errgroup.WithContext(context.Background())
+	errgroup.SetLimit(10) // Limit concurrency to 10 goroutines
+
+	errgroup.Go(func() error {
+		slog.Info("Start creating string to int mappings...")
+		for i := range t.StringToIntSlice {
+			currentWord := t.StringToIntSlice[i]
+			t.StringToInt[currentWord] = i
+		}
+		slog.Info("string to int mappings created.")
+		return nil
+	})
+	errgroup.Go(func() error {
+		slog.Info("Start creating int to string mappings...")
+		for i := range t.StringToIntSlice {
+			currentWord := t.StringToIntSlice[i]
+			t.IntToString[i] = []byte(currentWord)
+		}
+		slog.Info("int to string mappings created.")
+		return nil
+	})
+	if err := errgroup.Wait(); err != nil {
+		slog.Error("Error creating mappings", "error", err)
+		return nil
 	}
-	slog.Info("string to int mappings created.")
-	slog.Info("Start creating int to string mappings...")
-	for i := range t.StringToIntSlice {
-		currentWord := t.StringToIntSlice[i]
-		t.IntToString[i] = []byte(currentWord)
-	}
-	slog.Info("int to string mappings created.")
 
 	slog.Info("Start converting input to int slice...")
 	res := make([]int, len(splitted))
