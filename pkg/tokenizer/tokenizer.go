@@ -56,7 +56,7 @@ type Tokenizer struct {
 func (t *Tokenizer) Encode(input string) []int {
 	slog.Info("[Encode] Start encoding input...")
 	defer func() {
-		slog.Info("[Encode] Input encoding complete.")
+		slog.Info("[Encode] End encoding input.")
 	}()
 	splitted := strings.Split(input, " ")
 	slog.Info("Start converting input to int slice...")
