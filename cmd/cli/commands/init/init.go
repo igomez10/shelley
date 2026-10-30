@@ -1,0 +1,50 @@
+package initcmd
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+
+	"github.com/igomez10/shelley/cmd/cli/flags"
+	"github.com/igomez10/shelley/cmd/cli/input"
+	"github.com/igomez10/shelley/pkg/tokenizer"
+	"github.com/urfave/cli/v3"
+)
+
+func GetCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "init",
+		Usage:     "build a tokenizer from a corpus",
+		UsageText: "init [--tokenizer path] [corpus words...]  (reads stdin when no words are given)",
+		Flags: []cli.Flag{
+			flags.VerboseFlag,
+			flags.TokenizerFlag,
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			slog.Info("Reading corpus...")
+			corpus, err := input.Read(cmd)
+			if err != nil {
+				return fmt.Errorf("failed to read corpus: %w", err)
+			}
+
+			path := cmd.String(flags.TokenizerFlag.Name)
+			out, err := os.Create(path)
+			if err != nil {
+				return fmt.Errorf("failed to create tokenizer file: %w", err)
+			}
+			defer out.Close()
+
+			tkn := tokenizer.New()
+			if err := tkn.Init(string(corpus), out); err != nil {
+				return fmt.Errorf("failed to build tokenizer: %w", err)
+			}
+			if err := out.Close(); err != nil {
+				return fmt.Errorf("failed to write tokenizer file: %w", err)
+			}
+
+			fmt.Fprintf(cmd.Root().Writer, "Tokenizer with %d tokens saved to %s\n", len(tkn.StringToIntSlice), path)
+			return nil
+		},
+	}
+}

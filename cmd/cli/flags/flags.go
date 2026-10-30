@@ -8,3 +8,12 @@ var VerboseFlag = &cli.BoolFlag{
 	Usage:    "enable verbose output",
 	Required: false,
 }
+
+const DefaultTokenizerPath = "/tmp/tokenizer.gob"
+
+var TokenizerFlag = &cli.StringFlag{
+	Name:    "tokenizer",
+	Aliases: []string{"t"},
+	Usage:   "path to the tokenizer file",
+	Value:   DefaultTokenizerPath,
+}

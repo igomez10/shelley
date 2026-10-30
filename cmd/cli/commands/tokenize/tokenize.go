@@ -3,12 +3,11 @@ package tokenize
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
+	"github.com/igomez10/shelley/cmd/cli/input"
 	"github.com/igomez10/shelley/pkg/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -21,46 +20,29 @@ func GetCmd() *cli.Command {
 		UsageText: "tokenize - does the tokenizing",
 		Flags: []cli.Flag{
 			flags.VerboseFlag,
+			flags.TokenizerFlag,
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			slog.Info("Tokenizing input...")
-			var cmdInput []byte
-			if cmd.NArg() > 0 {
-				b := strings.Builder{}
-				for i, arg := range cmd.Args().Slice() {
-					b.WriteString(arg + " ")
-					if i%1000 == 0 {
-						slog.Info("Processed arguments...", slog.Int("count", i+1))
-					}
-				}
-				cmdInput = []byte(b.String()[:b.Len()-1]) // Remove trailing space
-			} else {
-				if cmd.Reader == nil {
-					return fmt.Errorf("no input provided")
-				}
-				input, err := io.ReadAll(cmd.Reader)
-				if err != nil {
-					return err
-				}
-				cmdInput = input
+			cmdInput, err := input.Read(cmd)
+			if err != nil {
+				return fmt.Errorf("failed to read input: %w", err)
 			}
 
-			slog.Info("Creating new tokenizer...")
-			gobfile, err := os.Open("/tmp/tokenizer.gob")
+			slog.Info("Loading tokenizer...")
+			gobfile, err := os.Open(cmd.String(flags.TokenizerFlag.Name))
 			if err != nil {
-				return fmt.Errorf("failed to open tokenizer file: %w", err)
+				return fmt.Errorf("failed to open tokenizer file (run `init` first?): %w", err)
 			}
+			defer gobfile.Close()
 			tkn, err := tokenizer.NewFromFile(gobfile)
 			if err != nil {
 				return fmt.Errorf("failed to load tokenizer: %w", err)
 			}
-			if tkn.Trie == nil {
-				panic("Trie is nil in tokenizer")
-			}
 			slog.Info("Encoding input...")
 			res := tkn.Encode(string(cmdInput))
 			slog.Info("Tokenization complete.")
-			fmt.Println("Tokenized output:", res)
+			fmt.Fprintln(cmd.Root().Writer, "Tokenized output:", res)
 
 			return nil
 		},

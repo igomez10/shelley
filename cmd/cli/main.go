@@ -7,12 +7,22 @@ import (
 
 	initcmd "github.com/igomez10/shelley/cmd/cli/commands/init"
 	"github.com/igomez10/shelley/cmd/cli/commands/tokenize"
+	"github.com/igomez10/shelley/cmd/cli/commands/vocab"
 	"github.com/urfave/cli/v3"
 )
 
 func main() {
 	ctx := context.Background()
-	cmd := &cli.Command{
+	cmd := newRootCmd()
+
+	if err := cmd.Run(ctx, os.Args); err != nil {
+		fmt.Println("Error running command:", err)
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cli.Command {
+	return &cli.Command{
 		Name:      "shelley",
 		Usage:     "cli to handle llm tasks",
 		UsageText: "cli [global options] command [command options] [arguments...]",
@@ -20,11 +30,7 @@ func main() {
 		Commands: []*cli.Command{
 			tokenize.GetCmd(),
 			initcmd.GetCmd(),
+			vocab.GetCmd(),
 		},
-	}
-
-	if err := cmd.Run(ctx, os.Args); err != nil {
-		fmt.Println("Error running command:", err)
-		os.Exit(1)
 	}
 }
