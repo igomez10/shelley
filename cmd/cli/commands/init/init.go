@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
 	"github.com/igomez10/shelley/cmd/cli/input"
+	"github.com/igomez10/shelley/cmd/cli/output"
 	"github.com/igomez10/shelley/pkg/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -35,7 +35,7 @@ func GetCmd() *cli.Command {
 			}
 
 			path := cmd.String(flags.TokenizerFlag.Name)
-			out, err := os.Create(path)
+			out, err := output.Create(path)
 			if err != nil {
 				return fmt.Errorf("failed to create tokenizer file: %w", err)
 			}

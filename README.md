@@ -6,11 +6,12 @@ The goal is to understand how an LLM works by writing every piece myself, from t
 
 ## Status
 
-Early. Right now there's only the tokenizer.
+Early. There's a tokenizer and the training dataset it produces.
 
 | Stage                         | Status         |
 | ----------------------------- | -------------- |
 | Tokenizer (word-level, trie)  | in progress    |
+| Dataset preparation           | done           |
 | Subword tokenizer (BPE)       | not started    |
 | Embeddings                    | not started    |
 | Self-attention                | not started    |
@@ -28,7 +29,9 @@ cmd/cli/                    CLI entry point (urfave/cli v3)
   commands/init/            `shelley init`: build a tokenizer from a corpus
   commands/tokenize/        `shelley tokenize`: encode text into token IDs
   commands/vocab/           `shelley vocab`: export the vocabulary as CSV
+  commands/prepare/         `shelley prepare`: encode a corpus into a training dataset
 pkg/tokenizer/              tokenizer + trie
+pkg/dataset/                dataset file format + training examples and batches
 ```
 
 ### Tokenizer
@@ -61,22 +64,22 @@ Requires Go 1.24+.
 go build -o cli ./cmd/cli
 
 # build a tokenizer from a corpus (args or stdin)
-cat data/corpus.txt | ./cli init
+./cli init < data/raw/wikitext-2-raw/wiki.train.raw
 
 # tokenize arguments or stdin
 ./cli tokenize the cat sat
 echo "the cat sat" | ./cli tokenize
 ```
 
-Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. Pass `--tokenizer <path>` (`-t`) to use a different file.
+All commands read and write the tokenizer at `data/tokenizer/tokenizer.gob` by default, relative to where you run the CLI (normally the repo root). Output folders are created as needed. Pass `--tokenizer <path>` (`-t`) to use a different file.
 
 ### Tokenizing a sequence
 
 1. Download a corpus and build the vocabulary from it (only needed once):
 
    ```sh
-   make data        # WikiText-2 → data/corpus.txt
-   make tokenizer   # builds ./cli and saves a 10,000-token /tmp/tokenizer.gob
+   make data        # WikiText-2 → data/raw/
+   make tokenizer   # builds ./cli and saves a 10,000-token data/tokenizer/tokenizer.gob
    ```
 
 2. Tokenize text, passed either as arguments or on stdin:
@@ -84,7 +87,7 @@ Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. P
    ```sh
    ./cli tokenize "the history of the Roman Empire ."
    echo "the history of the Roman Empire ." | ./cli tokenize
-   ./cli tokenize < data/wikitext-2-raw/wiki.test.raw   # a whole file
+   ./cli tokenize < data/raw/wikitext-2-raw/wiki.test.raw   # a whole file
    ```
 
    `to` is a short alias for `tokenize`. Log lines go to stderr, so add `2>/dev/null` to see only the result.
@@ -93,7 +96,7 @@ Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. P
 
    ```sh
    make tokenize TEXT="the history of the Roman Empire ."
-   make tokenize FILE=data/wikitext-2-raw/wiki.test.raw
+   make tokenize FILE=data/raw/wikitext-2-raw/wiki.test.raw
    ```
 
 3. Read the output. There is one ID per word, in the same order as the input:
@@ -109,7 +112,7 @@ Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. P
 `vocab` exports every token with its ID and how many times it appeared in the corpus, as CSV ordered by ID:
 
 ```sh
-make vocab                              # writes data/vocab.csv
+make vocab                              # writes data/tokenizer/vocab.csv
 ./cli vocab > vocab.csv                 # or to stdout
 ./cli vocab -t /tmp/small.gob -o small.csv
 ```
@@ -130,7 +133,7 @@ Tokens that contain commas or quotes are quoted in standard CSV style, so `","` 
 To list the most frequent tokens:
 
 ```sh
-tail -n +2 data/vocab.csv | sort -t, -k3 -rn | head
+tail -n +2 data/tokenizer/vocab.csv | sort -t, -k3 -rn | head
 ```
 
 To use a tokenizer saved somewhere else, pass it with `-t`:
@@ -143,11 +146,44 @@ To use a tokenizer saved somewhere else, pass it with `-t`:
 From Go code:
 
 ```go
-f, _ := os.Open("/tmp/tokenizer.gob")
+f, _ := os.Open("data/tokenizer/tokenizer.gob")
 tkn, err := tokenizer.NewFromFile(f)
 ids := tkn.Encode("the cat sat")
 text := tkn.Decode(ids) // "the cat sat"
 ```
+
+### Preparing the training data
+
+Training needs the corpus as token IDs, not text. `prepare` encodes a corpus once with the tokenizer and saves the IDs to a text file, so training reads numbers from disk instead of re-tokenizing text on every pass:
+
+```sh
+make prepare     # data/preparation/train.txt and val.txt from the WikiText-2 splits
+./cli prepare -o data/preparation/train.txt < data/raw/wikitext-2-raw/wiki.train.raw
+```
+
+```text
+Encoded 2051910 tokens (202121 unknown, 9.9%) to data/preparation/train.txt
+Example with context length 8:
+  inputs:  [467 3397 1039 1850 467 0 7337 3397]  = Valkyria Chronicles III = <unk> no Valkyria
+  targets: [3397 1039 1850 467 0 7337 3397 349]  Valkyria Chronicles III = <unk> no Valkyria 3
+```
+
+The file is plain text with one token ID per line, in corpus order, so you can open it in any editor or use `head`:
+
+```sh
+head -4 data/preparation/train.txt
+# 467
+# 3397
+# 1039
+# 1850
+```
+
+Line `n` holds token `n-1`, since IDs are counted from 0. Real LLM pipelines store tokens as fixed-size binary integers instead (nanoGPT uses `uint16`), which makes huge datasets smaller and lets training jump straight to any position. At 2 million tokens that makes no difference, so this project keeps the readable format. Only train and validation are encoded. The test split stays untouched for a final evaluation.
+
+`pkg/dataset` reads these files and cuts them into training examples for **next-token prediction**:
+
+- **`Example(start, contextLen)`** returns a **context window** of `contextLen` tokens and its **targets**, which are the same window shifted one token ahead. Each position is one prediction: after `=` comes `Valkyria`, after `= Valkyria` comes `Chronicles`, and so on, so one window holds `contextLen` training examples.
+- **`Batch(rng, batchSize, contextLen)`** returns `batchSize` windows starting at random positions, the input to one training step. Pass a seeded `rand.Rand` to get the same batches every run.
 
 ### Make targets
 
@@ -157,16 +193,31 @@ Run `make` to see them all. The main ones:
 make build       # build ./cli
 make test        # run tests
 make check       # gofmt check, go vet, tests with the race detector
-make tokenizer   # build a 10,000-token tokenizer from data/corpus.txt
+make tokenizer   # build a 10,000-token tokenizer from the WikiText-2 train split
 make tokenizer VOCAB_SIZE=0        # no limit: keep every word
 make tokenizer CORPUS=other.txt TOKENIZER=/tmp/other.gob
 make tokenize TEXT="the cat sat"   # or FILE=path; TOKENIZER= also works
-make vocab       # export the vocabulary to data/vocab.csv
+make vocab       # export the vocabulary to data/tokenizer/vocab.csv
+make prepare     # encode train/val splits into data/preparation/
 make clean
 ```
 
 ## Data
 
-Training corpora go in `data/`, which git ignores.
+Everything generated lives in `data/`, which git ignores. It has one folder per pipeline step, and each step is built from the one before it:
 
-`make data` downloads [WikiText-2](https://wikitext.smerity.com/) (raw), about 11 MB of English Wikipedia articles split into train, validation and test files under `data/wikitext-2-raw/`. It copies the train split to `data/corpus.txt`, which `make tokenizer` reads by default. `make clean-data` deletes it all.
+```text
+data/
+  raw/            1. make data       downloaded corpus
+    wikitext-2-raw/wiki.{train,valid,test}.raw
+  tokenizer/      2. make tokenizer  tokenizer built from the train split
+    tokenizer.gob
+    vocab.csv        make vocab      the vocabulary as token,id,count
+  preparation/    3. make prepare    train/validation splits as token IDs
+    train.txt
+    val.txt
+```
+
+The corpus is [WikiText-2](https://wikitext.smerity.com/) (raw), about 11 MB of English Wikipedia articles already split into train, validation and test. Only the train split is used to build the tokenizer, and the test split is never encoded, so it stays untouched for a final evaluation.
+
+If you rebuild the tokenizer, for example with a different `VOCAB_SIZE`, run `make vocab` and `make prepare` again: the token IDs in later steps depend on it. `make clean-data` deletes all three folders.

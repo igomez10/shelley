@@ -6,6 +6,7 @@ import (
 	"os"
 
 	initcmd "github.com/igomez10/shelley/cmd/cli/commands/init"
+	"github.com/igomez10/shelley/cmd/cli/commands/prepare"
 	"github.com/igomez10/shelley/cmd/cli/commands/tokenize"
 	"github.com/igomez10/shelley/cmd/cli/commands/vocab"
 	"github.com/urfave/cli/v3"
@@ -31,6 +32,7 @@ func newRootCmd() *cli.Command {
 			tokenize.GetCmd(),
 			initcmd.GetCmd(),
 			vocab.GetCmd(),
+			prepare.GetCmd(),
 		},
 	}
 }

@@ -9,7 +9,9 @@ var VerboseFlag = &cli.BoolFlag{
 	Required: false,
 }
 
-const DefaultTokenizerPath = "/tmp/tokenizer.gob"
+// DefaultTokenizerPath is relative to the directory the CLI runs from, which
+// is normally the repository root.
+const DefaultTokenizerPath = "data/tokenizer/tokenizer.gob"
 
 var TokenizerFlag = &cli.StringFlag{
 	Name:    "tokenizer",

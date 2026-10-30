@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/igomez10/shelley/cmd/cli/flags"
+	"github.com/igomez10/shelley/cmd/cli/output"
 	"github.com/igomez10/shelley/pkg/tokenizer"
 	"github.com/urfave/cli/v3"
 )
@@ -47,7 +48,7 @@ func GetCmd() *cli.Command {
 				return writeCSV(cmd.Root().Writer, tkn)
 			}
 
-			out, err := os.Create(path)
+			out, err := output.Create(path)
 			if err != nil {
 				return fmt.Errorf("failed to create output file: %w", err)
 			}

@@ -14,10 +14,11 @@ Module: `github.com/igomez10/shelley`. Go 1.24. Dependencies: `urfave/cli/v3`, `
 make build       # build the CLI (binary `cli` is gitignored)
 make test        # all tests
 make check       # gofmt check + go vet + tests with -race; run before committing
-make data        # download WikiText-2 into data/ and copy its train split to data/corpus.txt
-make tokenizer   # build a tokenizer from data/corpus.txt (override CORPUS=, TOKENIZER=, VOCAB_SIZE=; default 10000)
+make data        # step 1: download WikiText-2 into data/raw/
+make tokenizer   # step 2: build data/tokenizer/tokenizer.gob from the train split (override CORPUS=, TOKENIZER=, VOCAB_SIZE=; default 10000)
 make tokenize TEXT="the cat sat"   # or FILE=path; hides logs
-make vocab       # export the vocabulary as token,id,count CSV to data/vocab.csv
+make vocab       # step 2: export the vocabulary as token,id,count CSV to data/tokenizer/vocab.csv
+make prepare     # step 3: encode the WikiText-2 train/val splits to data/preparation/{train,val}.txt
 go test ./pkg/tokenizer -run TestTrie   # a single test
 ```
 
@@ -30,8 +31,14 @@ Run `make` to list all targets.
 - `cmd/cli/input/`: `Read(cmd)` returns args joined by spaces, or stdin when there are no args. Commands read stdin and write output through `cmd.Root().Reader`/`Writer` so tests can swap them.
 - `cmd/cli/main_test.go`: end-to-end CLI tests that run `newRootCmd()` against a temp tokenizer file.
 - `pkg/tokenizer/`: word-level tokenizer backed by a rune-keyed trie. `Init` builds the vocabulary and gob-serializes the whole `Tokenizer` struct. `NewFromFile` deserializes it. Exported struct fields are part of the gob format, so renaming them breaks saved tokenizers.
-- `init` builds a tokenizer and saves it, and `tokenize` loads it. Both use `--tokenizer`, which defaults to `/tmp/tokenizer.gob`.
+- `pkg/dataset/`: dataset files are plain text, one token ID per line (`Read` tolerates blank lines, surrounding spaces and CRLF). `Example(start, contextLen)` returns a window and its targets shifted by one; `Batch(rng, batchSize, contextLen)` samples random windows. Batches share memory with the dataset.
+- `prepare` encodes a corpus (stdin) with the tokenizer and writes a dataset file (`--output`, required). The test split is deliberately not encoded.
+- `init` builds a tokenizer and saves it, and `tokenize` loads it. All commands use `--tokenizer`, which defaults to `data/tokenizer/tokenizer.gob` (relative to the working directory). Commands that write files go through `cmd/cli/output.Create`, which creates parent directories.
 - IDs 0–3 are special tokens (`UnkID`, `BosID`, `EosID`, `PadID`), then the sorted, deduplicated corpus words. Special tokens are not inserted into the trie. `Counts[id]` is how many times the token appeared in the corpus. `Init(corpus, vocabSize, out)` keeps the `vocabSize` most frequent tokens (special tokens included, 0 = no limit); the dropped words are added to `Counts[UnkID]`, the other special tokens stay 0. `NewFromFile` rejects files saved before special tokens or counts existed.
+
+## Data layout
+
+`data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt). New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
 
 ## Conventions
 
