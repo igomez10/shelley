@@ -9,7 +9,7 @@ import (
 
 func TestTokenizer_EncodeDecode(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("hello world hello again", nil); err != nil {
+	if err := tkn.Init("hello world hello again", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -31,7 +31,7 @@ func TestTokenizer_EncodeDecode(t *testing.T) {
 
 func TestTokenizer_InitSortsAndDeduplicates(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("cherry apple banana apple cherry", nil); err != nil {
+	if err := tkn.Init("cherry apple banana apple cherry", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,13 +65,14 @@ func TestTokenizer_InitCounts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			tkn := New()
-			if err := tkn.Init(test.corpus, nil); err != nil {
+			if err := tkn.Init(test.corpus, 0, nil); err != nil {
 				t.Fatal(err)
 			}
 			if len(tkn.Counts) != len(tkn.StringToIntSlice) {
 				t.Fatalf("len(Counts) = %d; expected %d", len(tkn.Counts), len(tkn.StringToIntSlice))
 			}
 			for id := range SpecialTokens {
+				// With no vocabulary limit every word is kept, so even <unk> is 0.
 				if tkn.Counts[id] != 0 {
 					t.Errorf("Counts[%d] (%s) = %d; expected 0", id, SpecialTokens[id], tkn.Counts[id])
 				}
@@ -92,9 +93,69 @@ func TestTokenizer_InitCounts(t *testing.T) {
 	}
 }
 
+func TestTokenizer_InitVocabSize(t *testing.T) {
+	// counts: the 4, a 3, cat 2, sat 2, dog 1, mat 1
+	corpus := "the the the the a a a cat cat sat sat dog mat"
+
+	tests := []struct {
+		name      string
+		vocabSize int
+		words     []string // vocabulary after the special tokens, in ID order
+		unknown   int      // Counts[UnkID]
+	}{
+		{"no limit", 0, []string{"a", "cat", "dog", "mat", "sat", "the"}, 0},
+		{"limit larger than vocabulary", 100, []string{"a", "cat", "dog", "mat", "sat", "the"}, 0},
+		{"exact fit", 10, []string{"a", "cat", "dog", "mat", "sat", "the"}, 0},
+		{"keeps most frequent", 6, []string{"a", "the"}, 6},
+		// cat and sat tie with 2; the alphabetical tie break keeps cat.
+		{"tie broken alphabetically", 7, []string{"a", "cat", "the"}, 4},
+		{"only special tokens", 4, []string{}, 13},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tkn := New()
+			if err := tkn.Init(corpus, test.vocabSize, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := tkn.StringToIntSlice[len(SpecialTokens):]; !slices.Equal(got, test.words) {
+				t.Errorf("words = %v; expected %v", got, test.words)
+			}
+			if got := tkn.Counts[UnkID]; got != test.unknown {
+				t.Errorf("Counts[<unk>] = %d; expected %d", got, test.unknown)
+			}
+
+			// Every corpus word is either in the vocabulary or counted as <unk>.
+			total := 0
+			for _, c := range tkn.Counts {
+				total += c
+			}
+			if total != 13 {
+				t.Errorf("sum of Counts = %d; expected 13 corpus words", total)
+			}
+
+			// Dropped words encode as <unk>.
+			for _, id := range tkn.Encode(corpus) {
+				if id != UnkID && !slices.Contains(test.words, tkn.StringToIntSlice[id]) {
+					t.Errorf("Encode returned ID %d for a word outside the vocabulary", id)
+				}
+			}
+		})
+	}
+}
+
+func TestTokenizer_InitInvalidVocabSize(t *testing.T) {
+	for _, size := range []int{-1, 1, 3} {
+		if err := New().Init("a b c", size, nil); err == nil {
+			t.Errorf("Init with vocabSize %d: expected an error", size)
+		}
+	}
+}
+
 func TestTokenizer_InitSplitsOnAnyWhitespace(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("one\ntwo\tthree  four\n", nil); err != nil {
+	if err := tkn.Init("one\ntwo\tthree  four\n", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,7 +167,7 @@ func TestTokenizer_InitSplitsOnAnyWhitespace(t *testing.T) {
 
 func TestTokenizer_EncodeUnknown(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("apple banana", nil); err != nil {
+	if err := tkn.Init("apple banana", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +191,7 @@ func TestTokenizer_EncodeUnknown(t *testing.T) {
 
 func TestTokenizer_DecodeUnknown(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("apple", nil); err != nil {
+	if err := tkn.Init("apple", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,7 +203,7 @@ func TestTokenizer_DecodeUnknown(t *testing.T) {
 func TestTokenizer_SaveAndLoad(t *testing.T) {
 	tkn := New()
 	var buf bytes.Buffer
-	if err := tkn.Init("the cat sat on the mat", &buf); err != nil {
+	if err := tkn.Init("the cat sat on the mat", 0, &buf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,7 +237,7 @@ func TestTokenizer_SaveAndLoad(t *testing.T) {
 
 func TestTokenizer_SpecialTokens(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("hello world", nil); err != nil {
+	if err := tkn.Init("hello world", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,7 +265,7 @@ func TestTokenizer_SpecialTokens(t *testing.T) {
 func TestTokenizer_SpecialTokensInText(t *testing.T) {
 	tkn := New()
 	// The corpus itself contains special token text.
-	if err := tkn.Init("hello <eos> world <unk>", nil); err != nil {
+	if err := tkn.Init("hello <eos> world <unk>", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -232,7 +293,7 @@ func TestTokenizer_SpecialTokensInText(t *testing.T) {
 
 func TestTokenizer_EmptyCorpus(t *testing.T) {
 	tkn := New()
-	if err := tkn.Init("", nil); err != nil {
+	if err := tkn.Init("", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,7 +327,7 @@ func TestNewFromFile_WithoutSpecialTokens(t *testing.T) {
 func TestNewFromFile_WithoutCounts(t *testing.T) {
 	// A tokenizer saved before counts existed.
 	old := New()
-	if err := old.Init("apple banana", nil); err != nil {
+	if err := old.Init("apple banana", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	old.Counts = nil

@@ -12,14 +12,20 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+var vocabSizeFlag = &cli.IntFlag{
+	Name:  "vocab-size",
+	Usage: "keep only the most frequent words, special tokens included (0 = no limit)",
+}
+
 func GetCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "init",
 		Usage:     "build a tokenizer from a corpus",
-		UsageText: "init [--tokenizer path] [corpus words...]  (reads stdin when no words are given)",
+		UsageText: "init [--tokenizer path] [--vocab-size n] [corpus words...]  (reads stdin when no words are given)",
 		Flags: []cli.Flag{
 			flags.VerboseFlag,
 			flags.TokenizerFlag,
+			vocabSizeFlag,
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			slog.Info("Reading corpus...")
@@ -36,7 +42,7 @@ func GetCmd() *cli.Command {
 			defer out.Close()
 
 			tkn := tokenizer.New()
-			if err := tkn.Init(string(corpus), out); err != nil {
+			if err := tkn.Init(string(corpus), cmd.Int(vocabSizeFlag.Name), out); err != nil {
 				return fmt.Errorf("failed to build tokenizer: %w", err)
 			}
 			if err := out.Close(); err != nil {

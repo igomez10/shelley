@@ -35,7 +35,7 @@ pkg/tokenizer/              tokenizer + trie
 
 `pkg/tokenizer` is a word-level tokenizer:
 
-- **`Init(corpus, out)`** reserves IDs 0–3 for special tokens, then splits the corpus on whitespace, sorts and deduplicates the words, and numbers them from 4 in that order. It also counts how many times each word appears and stores that in `Counts`, indexed by ID. It builds both an ID → word map and a word → ID trie, then gob-encodes the tokenizer to `out` (if not nil).
+- **`Init(corpus, out)`** reserves IDs 0–3 for special tokens, then splits the corpus on whitespace, sorts and deduplicates the words, and numbers them from 4 in that order. It also counts how many times each word appears and stores that in `Counts`, indexed by ID. A `vocabSize` greater than 0 keeps only the most frequent words (ties broken alphabetically). The words left out encode as `<unk>`, and their occurrences are added to `<unk>`'s count. It builds both an ID → word map and a word → ID trie, then gob-encodes the tokenizer to `out` (if not nil).
 - **`Encode(text)`** splits on whitespace and looks up each word in the trie. Unknown words get `UnkID` (0), including words that are only a prefix of a known word.
 - **`Decode(ids)`** maps IDs back to words and joins them with spaces, writing `<unk>` for unknown IDs.
 - **`NewFromFile(r)`** loads a tokenizer saved by `Init`.
@@ -76,7 +76,7 @@ Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. P
 
    ```sh
    make data        # WikiText-2 → data/corpus.txt
-   make tokenizer   # builds ./cli and saves /tmp/tokenizer.gob
+   make tokenizer   # builds ./cli and saves a 10,000-token /tmp/tokenizer.gob
    ```
 
 2. Tokenize text, passed either as arguments or on stdin:
@@ -99,10 +99,10 @@ Both commands read and write the tokenizer at `/tmp/tokenizer.gob` by default. P
 3. Read the output. There is one ID per word, in the same order as the input:
 
    ```text
-   Tokenized output: [72167 54867 61476 72167 31193 13129 271]
+   Tokenized output: [9339 6333 7421 9339 2903 1381 31]
    ```
 
-   Repeated words get the same ID (`the` is `72167` both times), and words not in the vocabulary get `0` (`<unk>`). The exact numbers depend on the corpus the tokenizer was built from.
+   Repeated words get the same ID (`the` is `9339` both times), and words not in the vocabulary get `0` (`<unk>`). The exact numbers depend on the corpus the tokenizer was built from.
 
 ### Inspecting the vocabulary
 
@@ -125,7 +125,7 @@ token,id,count
 ...
 ```
 
-Tokens that contain commas or quotes are quoted in standard CSV style, so `","` is the comma token and `""""` is the `"` token. The file opens directly in a spreadsheet. Special tokens never appear in the corpus, so their count is 0.
+Tokens that contain commas or quotes are quoted in standard CSV style, so `","` is the comma token and `""""` is the `"` token. The file opens directly in a spreadsheet. The `<unk>` count is the number of corpus words left out of the vocabulary. The other special tokens never appear in the corpus, so their count is 0.
 
 To list the most frequent tokens:
 
@@ -157,7 +157,8 @@ Run `make` to see them all. The main ones:
 make build       # build ./cli
 make test        # run tests
 make check       # gofmt check, go vet, tests with the race detector
-make tokenizer   # build a tokenizer from data/corpus.txt
+make tokenizer   # build a 10,000-token tokenizer from data/corpus.txt
+make tokenizer VOCAB_SIZE=0        # no limit: keep every word
 make tokenizer CORPUS=other.txt TOKENIZER=/tmp/other.gob
 make tokenize TEXT="the cat sat"   # or FILE=path; TOKENIZER= also works
 make vocab       # export the vocabulary to data/vocab.csv

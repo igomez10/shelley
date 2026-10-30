@@ -1,6 +1,8 @@
 BINARY    := cli
 TOKENIZER ?= /tmp/tokenizer.gob
 CORPUS    ?= data/corpus.txt
+# Most frequent words to keep, special tokens included (0 = no limit)
+VOCAB_SIZE ?= 10000
 
 # Text for `make tokenize`, e.g. make tokenize TEXT="the cat sat".
 # Exported so the recipe reads it from the environment, which keeps quotes and
@@ -54,8 +56,8 @@ $(WIKITEXT_DIR)/wiki.train.raw:
 	rm data/wikitext-2-raw-v1.zip
 	touch $@
 
-tokenizer: build ## build a tokenizer from CORPUS into TOKENIZER
-	./$(BINARY) init --tokenizer $(TOKENIZER) < $(CORPUS)
+tokenizer: build ## build a tokenizer of VOCAB_SIZE tokens from CORPUS into TOKENIZER
+	./$(BINARY) init --tokenizer $(TOKENIZER) --vocab-size $(VOCAB_SIZE) < $(CORPUS)
 
 tokenize: build ## tokenize TEXT="..." or FILE=path with the tokenizer at TOKENIZER
 ifneq ($(FILE),)

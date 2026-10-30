@@ -68,7 +68,8 @@ type Tokenizer struct {
 	IntToString      map[int][]byte
 	Trie             *Trie
 	// Counts holds how many times each token appeared in the corpus, indexed by
-	// ID. Special tokens never appear in the corpus, so their count is 0.
+	// ID. For <unk> it is the number of corpus words left out of the vocabulary;
+	// the other special tokens never appear in the corpus, so their count is 0.
 	Counts []int
 }
 
@@ -115,13 +116,22 @@ func (t *Tokenizer) Decode(input []int) string {
 
 // Init builds the vocabulary from the words in input. The special tokens take
 // the first IDs, then each distinct word gets the next ID in sorted order. It
-// also records how many times each word appears in Counts. If out is not nil, the
-// tokenizer is gob-encoded to it so it can be loaded later with NewFromFile.
-func (t *Tokenizer) Init(input string, out io.Writer) error {
+// also records how many times each word appears in Counts.
+//
+// vocabSize limits the vocabulary, special tokens included, to the most
+// frequent words; 0 means no limit. Words left out are counted as <unk>.
+//
+// If out is not nil, the tokenizer is gob-encoded to it so it can be loaded
+// later with NewFromFile.
+func (t *Tokenizer) Init(input string, vocabSize int, out io.Writer) error {
 	slog.Info("[Init] Initializing tokenizer...")
 	defer func() {
 		slog.Info("[Init] Tokenizer initialized.")
 	}()
+
+	if vocabSize != 0 && vocabSize < len(SpecialTokens) {
+		return fmt.Errorf("vocabulary size must be 0 (no limit) or at least %d for the special tokens, got %d", len(SpecialTokens), vocabSize)
+	}
 
 	slog.Debug("Start counting tokens...")
 	counts := map[string]int{}
@@ -139,11 +149,29 @@ func (t *Tokenizer) Init(input string, out io.Writer) error {
 	for word := range counts {
 		words = append(words, word)
 	}
+
+	unknown := 0 // corpus words that did not make it into the vocabulary
+	if maxWords := vocabSize - len(SpecialTokens); vocabSize != 0 && len(words) > maxWords {
+		// Keep the most frequent words. Ties are broken alphabetically so the
+		// same corpus always gives the same vocabulary.
+		slices.SortFunc(words, func(a, b string) int {
+			if counts[a] != counts[b] {
+				return counts[b] - counts[a]
+			}
+			return strings.Compare(a, b)
+		})
+		for _, word := range words[maxWords:] {
+			unknown += counts[word]
+		}
+		words = words[:maxWords]
+	}
+
 	slices.Sort(words)
 	t.StringToIntSlice = append(slices.Clone(SpecialTokens), words...)
 	slog.Debug("Tokens sorted.", slog.Int("vocab_size", len(t.StringToIntSlice)))
 
-	t.Counts = make([]int, len(t.StringToIntSlice)) // special tokens stay at 0
+	t.Counts = make([]int, len(t.StringToIntSlice))
+	t.Counts[UnkID] = unknown // the other special tokens never appear in the corpus
 	for i := len(SpecialTokens); i < len(t.StringToIntSlice); i++ {
 		t.Counts[i] = counts[t.StringToIntSlice[i]]
 	}
