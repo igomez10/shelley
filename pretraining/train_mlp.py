@@ -11,6 +11,10 @@ Training minimizes cross-entropy, -ln p[actual next token], with backpropagation
 (loss.backward()) to compute gradients and AdamW to update every parameter,
 the embeddings included.
 
+Whenever the validation loss reaches a new low, the model is saved to
+data/training/mlp.pt, so the file always holds the best model of the run.
+generate.py loads it to sample text.
+
 Run from the repo root after `make tokenizer` and `make prepare`:
 
     make pretrain
@@ -32,6 +36,7 @@ DATA = Path("data")
 TRAIN_TXT = DATA / "preparation" / "train.txt"
 VAL_TXT = DATA / "preparation" / "val.txt"
 VOCAB_CSV = DATA / "tokenizer" / "vocab.csv"
+CHECKPOINT = DATA / "training" / "mlp.pt"
 
 
 def load_ids(path: Path) -> torch.Tensor:
@@ -109,22 +114,19 @@ def estimate_loss(model, dataset: Dataset, args) -> float:
     return sum(losses) / len(losses)
 
 
-def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
-    """Repeatedly sample the next token from the model's distribution and append it."""
-    out = list(prompt)
-    for _ in range(n):
-        x = torch.tensor([out[-model.window_size :]], device=device)
-        probs = F.softmax(model(x)[0], dim=-1).cpu()
-        out.append(int(torch.multinomial(probs, 1).item()))
-    return out
+def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> None:
+    """Train a fresh model on train_ds, reporting losses on train_ds and val_ds.
 
-
-def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
-    """Train a fresh model on train_ds, reporting losses on train_ds and val_ds."""
-    torch.manual_seed(args.seed)  # repeatable weight init (and sampling afterwards)
-    model = MLP(vocab_size, args.window_size, args.embed_dim, args.hidden).to(
-        args.device
-    )
+    Saves a checkpoint each time the validation loss reaches a new low.
+    """
+    torch.manual_seed(args.seed)  # repeatable weight init
+    config = {
+        "vocab_size": vocab_size,
+        "window_size": args.window_size,
+        "embed_dim": args.embed_dim,
+        "hidden": args.hidden,
+    }
+    model = MLP(**config).to(args.device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params:,} parameters on {args.device}")
     print(
@@ -138,12 +140,21 @@ def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
     train_batches = (batch for _ in itertools.count() for batch in loader)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     start = time.time()
+    best_val, best_step = math.inf, 0
     for step in range(args.steps + 1):
         if step % args.eval_interval == 0 or step == args.steps:
             train_loss = estimate_loss(model, train_ds, args)
             val_loss = estimate_loss(model, val_ds, args)
+            saved = ""
+            if val_loss < best_val:
+                best_val, best_step = val_loss, step
+                # The config is saved too, so generate.py can rebuild the same model.
+                checkpoint = {"model": model.state_dict(), "config": config, "step": step, "val_loss": val_loss}
+                args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(checkpoint, args.checkpoint)
+                saved = " | saved"
             print(
-                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | {time.time() - start:.0f}s"
+                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | {time.time() - start:.0f}s{saved}"
             )
         if step == args.steps:
             break
@@ -161,7 +172,7 @@ def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
     print(
         f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower"
     )
-    return model
+    print(f"  best val loss {best_val:.3f} at step {best_step:,}, saved to {args.checkpoint}")
 
 
 def main():
@@ -197,7 +208,10 @@ def main():
         help="batches averaged for each loss report",
     )
     p.add_argument(
-        "--generate", type=int, default=50, help="tokens to sample after training"
+        "--checkpoint",
+        type=Path,
+        default=CHECKPOINT,
+        help="where to save the model with the lowest validation loss",
     )
     p.add_argument(
         "--seed", type=int, default=1337, help="random seed, for repeatable runs"
@@ -218,18 +232,12 @@ def main():
         f"train: {len(train_ids):,} tokens | val: {len(val_ids):,} tokens | vocab: {vocab_size:,}"
     )
 
-    model = train(
+    train(
         Windows(train_ids, args.window_size),
         Windows(val_ids, args.window_size),
         vocab_size,
         args,
     )
-
-    if args.generate > 0:
-        prompt = val_ids[: args.window_size].tolist()
-        sample = generate(model, prompt, args.generate, args.device)
-        print("\nprompt:", " ".join(vocab[i] for i in prompt))
-        print("sample:", " ".join(vocab[i] for i in sample))
 
 
 if __name__ == "__main__":

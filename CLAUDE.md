@@ -21,7 +21,8 @@ make tokenizer   # step 2: build data/tokenizer/tokenizer.gob from the train spl
 make tokenize TEXT="the cat sat"   # or FILE=path; hides logs
 make vocab       # step 2: export the vocabulary as token,id,count CSV to data/tokenizer/vocab.csv
 make prepare     # step 3: encode the WikiText-2 train/val splits to data/preparation/{train,val}.txt
-make pretrain    # step 4: train pretraining/train_mlp.py and sample text; saves nothing (ARGS="--steps 5000")
+make pretrain    # step 4: train pretraining/train_mlp.py, saves the lowest-val-loss model to data/training/mlp.pt (ARGS="--steps 5000")
+make generate PROMPT="the history of"   # step 5: pretraining/generate.py samples text from data/training/mlp.pt
 go test ./pkg/tokenizer -run TestTrie   # a single test
 ```
 
@@ -41,7 +42,7 @@ Run `make` to list all targets.
 
 ## Data layout
 
-`data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt). New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
+`data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt), `training/` (mlp.pt: weights + the config needed to rebuild the model). `generate.py` imports `MLP` and paths from `train_mlp.py`, so model changes in one apply to both. New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
 
 ## Conventions
 

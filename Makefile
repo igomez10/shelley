@@ -4,6 +4,7 @@ BINARY := cli
 #   data/raw/          1. downloaded corpus (WikiText-2)
 #   data/tokenizer/    2. tokenizer built from the train split, and its vocabulary
 #   data/preparation/  3. train/validation splits encoded as token IDs
+#   data/training/     4. the trained model with the lowest validation loss
 RAW_DIR         := data/raw
 TOKENIZER_DIR   := data/tokenizer
 PREPARATION_DIR := data/preparation
@@ -27,11 +28,14 @@ VAL_TXT   := $(PREPARATION_DIR)/val.txt
 # Exported so the recipe reads it from the environment, which keeps quotes and
 # other shell characters in the text intact.
 export TEXT
+# Prompt for `make generate`, e.g. make generate PROMPT="the history of".
+# Exported for the same reason as TEXT.
+export PROMPT
 FILE ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare pretrain clean clean-data
+.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare pretrain generate clean clean-data
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -88,11 +92,14 @@ prepare: build $(WIKITEXT_TRAIN) $(WIKITEXT_VALID) ## step 3: encode the train a
 	@./$(BINARY) prepare --tokenizer $(TOKENIZER) --output $(TRAIN_TXT) < $(WIKITEXT_TRAIN) 2>/dev/null
 	@./$(BINARY) prepare --tokenizer $(TOKENIZER) --output $(VAL_TXT) < $(WIKITEXT_VALID) 2>/dev/null
 
-pretrain: ## step 4: train the PyTorch MLP model, print losses, a summary and sample text (ARGS="--steps 5000")
+pretrain: ## step 4: train the PyTorch MLP model, saving the best one to data/training/mlp.pt (ARGS="--steps 5000")
 	uv run pretraining/train_mlp.py $(ARGS)
 
 clean: ## remove build and coverage output
 	rm -f $(BINARY) coverage.out
 
-clean-data: ## remove everything under data/raw, data/tokenizer, data/preparation
-	rm -rf $(RAW_DIR) $(TOKENIZER_DIR) $(PREPARATION_DIR)
+generate: ## step 5: generate text with the trained model (PROMPT="the history of", ARGS="--tokens 100")
+	uv run pretraining/generate.py $(if $(PROMPT),--prompt "$$PROMPT") $(ARGS)
+
+clean-data: ## remove everything under data/raw, data/tokenizer, data/preparation, data/training
+	rm -rf $(RAW_DIR) $(TOKENIZER_DIR) $(PREPARATION_DIR) data/training

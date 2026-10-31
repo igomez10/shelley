@@ -199,15 +199,20 @@ make pretrain ARGS="--steps 5000 --window-size 5 --hidden 512"
 uv run pretraining/train_mlp.py --help
 ```
 
-The model looks up the embeddings of the previous `--window-size` tokens (default 3), joins them into one vector, passes it through a ReLU hidden layer, and outputs a score for every token in the vocabulary. Training minimizes cross-entropy with AdamW. Mini-batches come from a PyTorch `DataLoader` over every window in the corpus, shuffled so that each window is used exactly once per **epoch** (one full pass over the data, about 8,000 batches of 256). It prints the loss on train and validation every 1,000 steps (measured on the same batches each time, so the numbers are comparable), then a summary of the final losses, and samples some text at the end. The weights aren't saved, since nothing loads them yet:
+The model looks up the embeddings of the previous `--window-size` tokens (default 3), joins them into one vector, passes it through a ReLU hidden layer, and outputs a score for every token in the vocabulary. Training minimizes cross-entropy with AdamW. Mini-batches come from a PyTorch `DataLoader` over every window in the corpus, shuffled so that each window is used exactly once per **epoch** (one full pass over the data, about 8,000 batches of 256). It prints the loss on train and validation every 1,000 steps (measured on the same batches each time, so the numbers are comparable), then a summary of the final losses. Whenever the validation loss reaches a new low, it saves the model to `data/training/mlp.pt` (`| saved` in the log), so the file keeps the best model of the run rather than the last one, which has usually started to overfit:
 
 ```text
 model: 3,259,408 parameters on mps
 random guessing would give loss ln(10000) = 9.21
 one epoch = 8,016 batches of 256
-step      0 | epoch 0.00 | train 9.221 | val 9.210 | 0s
-step  10000 | epoch 1.25 | train 4.818 | val 5.052 | 26s
-step  20000 | epoch 2.50 | train 4.520 | val 5.073 | 52s
+step      0 | epoch 0.00 | train 9.221 | val 9.210 | 0s | saved
+step  16000 | epoch 2.00 | train 4.637 | val 5.002 | 37s | saved
+step  17000 | epoch 2.12 | train 4.591 | val 5.056 | 40s
+step  20000 | epoch 2.50 | train 4.526 | val 5.070 | 46s
+
+result after 20,000 steps (46s):
+  train loss 4.526 | val loss 5.070
+  best val loss 5.002 at step 16,000, saved to data/training/mlp.pt
 ```
 
 For reference, on the validation split:
@@ -217,7 +222,25 @@ For reference, on the validation split:
 | uniform guess                          | 9.21            |
 | unigram (overall word frequency)       | 6.19            |
 | bigram by counting (previous word)     | 5.29            |
-| MLP, context 3 (this script, ReLU)     | ~5.07           |
+| MLP, window 3 (this script, ReLU)      | ~5.00 (best)    |
+
+### Generating text
+
+`pretraining/generate.py` loads the saved model and continues a prompt by sampling one token at a time: it computes the probability of every next token, picks one at random according to those probabilities, appends it, and repeats with the last `--window-size` tokens.
+
+```sh
+make generate                                        # prompt "The", 50 tokens
+make generate PROMPT="the history of the" ARGS="--tokens 100 --seed 1"
+uv run pretraining/generate.py --help
+```
+
+```text
+model from step 16,000 (val loss 5.002)
+prompt: the history of the
+output: the history of the series . about <unk> of the family members . While this eyes response came and <unk> ...
+```
+
+The prompt is split on whitespace and looked up in `data/tokenizer/vocab.csv`, like `./cli tokenize`; unknown words become `<unk>`. A prompt shorter than the window is padded with `<unk>` at the start. Output is different every run unless you pass `--seed`. If there's no trained model yet, it tells you to run `make pretrain`.
 
 ### Make targets
 
@@ -233,7 +256,8 @@ make tokenizer CORPUS=other.txt TOKENIZER=/tmp/other.gob
 make tokenize TEXT="the cat sat"   # or FILE=path; TOKENIZER= also works
 make vocab       # export the vocabulary to data/tokenizer/vocab.csv
 make prepare     # encode train/val splits into data/preparation/
-make pretrain    # train the PyTorch MLP model and sample text
+make pretrain    # train the PyTorch MLP model, save the best one to data/training/mlp.pt
+make generate PROMPT="the history of"   # generate text with the trained model
 make clean
 ```
 
@@ -251,8 +275,10 @@ data/
   preparation/    3. make prepare    train/validation splits as token IDs
     train.txt
     val.txt
+  training/       4. make pretrain   the model with the lowest validation loss
+    mlp.pt
 ```
 
 The corpus is [WikiText-2](https://wikitext.smerity.com/) (raw), about 11 MB of English Wikipedia articles already split into train, validation and test. Only the train split is used to build the tokenizer, and the test split is never encoded, so it stays untouched for a final evaluation.
 
-If you rebuild the tokenizer, for example with a different `VOCAB_SIZE`, run `make vocab` and `make prepare` again: the token IDs in later steps depend on it. `make clean-data` deletes all three folders.
+If you rebuild the tokenizer, for example with a different `VOCAB_SIZE`, run `make vocab` and `make prepare` again: the token IDs in later steps depend on it. `make clean-data` deletes all four folders.
