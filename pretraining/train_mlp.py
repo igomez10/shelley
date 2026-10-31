@@ -51,14 +51,16 @@ class Windows(Dataset):
     """Every window in the corpus: `window_size` input tokens and the token right after them."""
 
     def __init__(self, ids: torch.Tensor, window_size: int):
-        self.ids = ids
+        self.token_ids = ids
         self.window_size = window_size
 
     def __len__(self) -> int:
-        return len(self.ids) - self.window_size  # number of valid start positions
+        return len(self.token_ids) - self.window_size  # number of valid start positions
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.ids[index : index + self.window_size], self.ids[index + self.window_size]
+        return self.token_ids[index : index + self.window_size], self.token_ids[
+            index + self.window_size
+        ]
 
 
 def make_loader(dataset: Dataset, args, seed: int) -> DataLoader:
@@ -76,29 +78,37 @@ class MLP(torch.nn.Module):
         super().__init__()
         self.window_size = window_size
         # One learned vector per token. Starts random; meaning comes from training.
-        self.embedding = torch.nn.Embedding(vocab_size, embed_dim)
-        self.hidden = torch.nn.Linear(window_size * embed_dim, hidden)
-        self.output = torch.nn.Linear(hidden, vocab_size)
+        self.word_embedding = torch.nn.Embedding(vocab_size, embed_dim)
+        self.hidden_layer = torch.nn.Linear(window_size * embed_dim, hidden)
+        self.output_layer = torch.nn.Linear(hidden, vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
         """x: (batch, window_size) token IDs → logits: (batch, vocab_size)."""
-        emb = self.embedding(x)  # (batch, window_size, embed_dim)
-        emb = emb.view(x.shape[0], -1)  # (batch, window_size * embed_dim): concatenate the window
-        h = torch.relu(self.hidden(emb))  # (batch, hidden)
-        return self.output(h)  # (batch, vocab_size), unnormalized scores
+        embedded_tokens = self.word_embedding(x)  # (batch, window_size, embed_dim)
+        embedded_tokens = embedded_tokens.view(
+            x.shape[0], -1
+        )  # (batch, window_size * embed_dim): concatenate the window
+        hidden_output = torch.relu(
+            self.hidden_layer(embedded_tokens)
+        )  # (batch, hidden)
+        return self.output_layer(
+            hidden_output
+        )  # (batch, vocab_size), unnormalized scores
 
 
-@torch.no_grad()
 def estimate_loss(model, dataset: Dataset, args) -> float:
     """Average loss over the same random batches every call, without updating weights."""
-    loader = make_loader(dataset, args, seed=0)  # same seed, same batches, so changes are real
+    loader = make_loader(
+        dataset, args, seed=0
+    )  # same seed, same batches, so changes are real
     losses = []
     for (x, y), _ in zip(loader, range(args.eval_batches)):
-        losses.append(F.cross_entropy(model(x.to(args.device)), y.to(args.device)).item())
+        losses.append(
+            F.cross_entropy(model(x.to(args.device)), y.to(args.device)).item()
+        )
     return sum(losses) / len(losses)
 
 
-@torch.no_grad()
 def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
     """Repeatedly sample the next token from the model's distribution and append it."""
     out = list(prompt)
@@ -112,10 +122,14 @@ def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
 def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
     """Train a fresh model on train_ds, reporting losses on train_ds and val_ds."""
     torch.manual_seed(args.seed)  # repeatable weight init (and sampling afterwards)
-    model = MLP(vocab_size, args.window_size, args.embed_dim, args.hidden).to(args.device)
+    model = MLP(vocab_size, args.window_size, args.embed_dim, args.hidden).to(
+        args.device
+    )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params:,} parameters on {args.device}")
-    print(f"random guessing would give loss ln({vocab_size}) = {math.log(vocab_size):.2f}")
+    print(
+        f"random guessing would give loss ln({vocab_size}) = {math.log(vocab_size):.2f}"
+    )
 
     loader = make_loader(train_ds, args, seed=args.seed)
     print(f"one epoch = {len(loader):,} batches of {args.batch_size}")
@@ -144,13 +158,17 @@ def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
 
     print(f"\nresult after {args.steps:,} steps ({time.time() - start:.0f}s):")
     print(f"  train loss {train_loss:.3f} | val loss {val_loss:.3f}")
-    print(f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower")
+    print(
+        f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower"
+    )
     return model
 
 
 def main():
     # Keep the docstring's layout and show each flag's default in --help.
-    class Formatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
+    class Formatter(
+        argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter
+    ):
         pass
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=Formatter)
@@ -164,15 +182,26 @@ def main():
         "--embed-dim", type=int, default=64, help="size of each token embedding"
     )
     p.add_argument("--hidden", type=int, default=256, help="size of the hidden layer")
-    p.add_argument("--batch-size", type=int, default=256, help="windows per training step")
+    p.add_argument(
+        "--batch-size", type=int, default=256, help="windows per training step"
+    )
     p.add_argument("--steps", type=int, default=20000, help="number of training steps")
     p.add_argument("--lr", type=float, default=1e-3, help="AdamW learning rate")
-    p.add_argument("--eval-interval", type=int, default=1000, help="steps between loss reports")
-    p.add_argument("--eval-batches", type=int, default=50, help="batches averaged for each loss report")
+    p.add_argument(
+        "--eval-interval", type=int, default=1000, help="steps between loss reports"
+    )
+    p.add_argument(
+        "--eval-batches",
+        type=int,
+        default=50,
+        help="batches averaged for each loss report",
+    )
     p.add_argument(
         "--generate", type=int, default=50, help="tokens to sample after training"
     )
-    p.add_argument("--seed", type=int, default=1337, help="random seed, for repeatable runs")
+    p.add_argument(
+        "--seed", type=int, default=1337, help="random seed, for repeatable runs"
+    )
     p.add_argument(
         "--device",
         default="mps" if torch.backends.mps.is_available() else "cpu",
@@ -189,7 +218,12 @@ def main():
         f"train: {len(train_ids):,} tokens | val: {len(val_ids):,} tokens | vocab: {vocab_size:,}"
     )
 
-    model = train(Windows(train_ids, args.window_size), Windows(val_ids, args.window_size), vocab_size, args)
+    model = train(
+        Windows(train_ids, args.window_size),
+        Windows(val_ids, args.window_size),
+        vocab_size,
+        args,
+    )
 
     if args.generate > 0:
         prompt = val_ids[: args.window_size].tolist()
