@@ -61,14 +61,14 @@ class Windows(Dataset):
         return self.ids[index : index + self.context], self.ids[index + self.context]
 
 
-def make_loader(ids: torch.Tensor, args, seed: int) -> DataLoader:
+def make_loader(dataset: Dataset, args, seed: int) -> DataLoader:
     """Shuffled mini-batches: each window is used exactly once per epoch, in random order.
 
     The DataLoader calls Windows[i] for batch_size random i and stacks the results
     into x: (batch, context) and y: (batch,).
     """
     gen = torch.Generator().manual_seed(seed)
-    return DataLoader(Windows(ids, args.context), batch_size=args.batch_size, shuffle=True, generator=gen)
+    return DataLoader(dataset, batch_size=args.batch_size, shuffle=True, generator=gen)
 
 
 class MLP(torch.nn.Module):
@@ -89,9 +89,9 @@ class MLP(torch.nn.Module):
 
 
 @torch.no_grad()
-def estimate_loss(model, ids, args) -> float:
+def estimate_loss(model, dataset: Dataset, args) -> float:
     """Average loss over the same random batches every call, without updating weights."""
-    loader = make_loader(ids, args, seed=0)  # same seed, same batches, so changes are real
+    loader = make_loader(dataset, args, seed=0)  # same seed, same batches, so changes are real
     losses = []
     for (x, y), _ in zip(loader, range(args.eval_batches)):
         losses.append(F.cross_entropy(model(x.to(args.device)), y.to(args.device)).item())
@@ -107,6 +107,45 @@ def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
         probs = F.softmax(model(x)[0], dim=-1).cpu()
         out.append(int(torch.multinomial(probs, 1).item()))
     return out
+
+
+def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
+    """Train a fresh model on train_ds, reporting losses on train_ds and val_ds."""
+    torch.manual_seed(args.seed)  # repeatable weight init (and sampling afterwards)
+    model = MLP(vocab_size, args.context, args.embed_dim, args.hidden).to(args.device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"model: {n_params:,} parameters on {args.device}")
+    print(f"random guessing would give loss ln({vocab_size}) = {math.log(vocab_size):.2f}")
+
+    loader = make_loader(train_ds, args, seed=args.seed)
+    print(f"one epoch = {len(loader):,} batches of {args.batch_size}")
+
+    # Batches forever: each pass over `loader` is a new, freshly shuffled epoch.
+    train_batches = (batch for _ in itertools.count() for batch in loader)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    start = time.time()
+    for step in range(args.steps + 1):
+        if step % args.eval_interval == 0 or step == args.steps:
+            train_loss = estimate_loss(model, train_ds, args)
+            val_loss = estimate_loss(model, val_ds, args)
+            print(
+                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | {time.time() - start:.0f}s"
+            )
+        if step == args.steps:
+            break
+
+        x, y = next(train_batches)
+        logits = model(x.to(args.device))
+        loss = F.cross_entropy(logits, y.to(args.device))  # mean of -ln p[target]
+
+        optimizer.zero_grad()
+        loss.backward()  # backpropagation: gradient of the loss for every parameter
+        optimizer.step()  # gradient descent: move each parameter against its gradient
+
+    print(f"\nresult after {args.steps:,} steps ({time.time() - start:.0f}s):")
+    print(f"  train loss {train_loss:.3f} | val loss {val_loss:.3f}")
+    print(f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower")
+    return model
 
 
 def main():
@@ -141,8 +180,6 @@ def main():
     )
     args = p.parse_args()
 
-    torch.manual_seed(args.seed)  # repeatable weight init and sampling
-
     # The DataLoader slices and stacks windows on the CPU; each batch moves to the device.
     train_ids = load_ids(TRAIN_TXT)
     val_ids = load_ids(VAL_TXT)
@@ -152,41 +189,7 @@ def main():
         f"train: {len(train_ids):,} tokens | val: {len(val_ids):,} tokens | vocab: {vocab_size:,}"
     )
 
-    model = MLP(vocab_size, args.context, args.embed_dim, args.hidden).to(args.device)
-    n_params = sum(p.numel() for p in model.parameters())
-    print(f"model: {n_params:,} parameters on {args.device}")
-    print(
-        f"random guessing would give loss ln({vocab_size}) = {math.log(vocab_size):.2f}"
-    )
-
-    loader = make_loader(train_ids, args, seed=args.seed)
-    print(f"one epoch = {len(loader):,} batches of {args.batch_size}")
-
-    # Batches forever: each pass over `loader` is a new, freshly shuffled epoch.
-    train_batches = (batch for _ in itertools.count() for batch in loader)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    start = time.time()
-    for step in range(args.steps + 1):
-        if step % args.eval_interval == 0 or step == args.steps:
-            train_loss = estimate_loss(model, train_ids, args)
-            val_loss = estimate_loss(model, val_ids, args)
-            print(
-                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | {time.time() - start:.0f}s"
-            )
-        if step == args.steps:
-            break
-
-        x, y = next(train_batches)
-        logits = model(x.to(args.device))
-        loss = F.cross_entropy(logits, y.to(args.device))  # mean of -ln p[target]
-
-        optimizer.zero_grad()
-        loss.backward()  # backpropagation: gradient of the loss for every parameter
-        optimizer.step()  # gradient descent: move each parameter against its gradient
-
-    print(f"\nresult after {args.steps:,} steps ({time.time() - start:.0f}s):")
-    print(f"  train loss {train_loss:.3f} | val loss {val_loss:.3f}")
-    print(f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower")
+    model = train(Windows(train_ids, args.context), Windows(val_ids, args.context), vocab_size, args)
 
     if args.generate > 0:
         prompt = val_ids[: args.context].tolist()
