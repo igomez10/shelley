@@ -48,42 +48,42 @@ def load_vocab(path: Path) -> list[str]:
 
 
 class Windows(Dataset):
-    """Every window in the corpus: `context` tokens and the token right after them."""
+    """Every window in the corpus: `window_size` input tokens and the token right after them."""
 
-    def __init__(self, ids: torch.Tensor, context: int):
+    def __init__(self, ids: torch.Tensor, window_size: int):
         self.ids = ids
-        self.context = context
+        self.window_size = window_size
 
     def __len__(self) -> int:
-        return len(self.ids) - self.context  # number of valid start positions
+        return len(self.ids) - self.window_size  # number of valid start positions
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.ids[index : index + self.context], self.ids[index + self.context]
+        return self.ids[index : index + self.window_size], self.ids[index + self.window_size]
 
 
 def make_loader(dataset: Dataset, args, seed: int) -> DataLoader:
     """Shuffled mini-batches: each window is used exactly once per epoch, in random order.
 
     The DataLoader calls Windows[i] for batch_size random i and stacks the results
-    into x: (batch, context) and y: (batch,).
+    into x: (batch, window_size) and y: (batch,).
     """
     gen = torch.Generator().manual_seed(seed)
     return DataLoader(dataset, batch_size=args.batch_size, shuffle=True, generator=gen)
 
 
 class MLP(torch.nn.Module):
-    def __init__(self, vocab_size: int, context: int, embed_dim: int, hidden: int):
+    def __init__(self, vocab_size: int, window_size: int, embed_dim: int, hidden: int):
         super().__init__()
-        self.context = context
+        self.window_size = window_size
         # One learned vector per token. Starts random; meaning comes from training.
         self.embedding = torch.nn.Embedding(vocab_size, embed_dim)
-        self.hidden = torch.nn.Linear(context * embed_dim, hidden)
+        self.hidden = torch.nn.Linear(window_size * embed_dim, hidden)
         self.output = torch.nn.Linear(hidden, vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
-        """x: (batch, context) token IDs → logits: (batch, vocab_size)."""
-        emb = self.embedding(x)  # (batch, context, embed_dim)
-        emb = emb.view(x.shape[0], -1)  # (batch, context * embed_dim): concatenate the window
+        """x: (batch, window_size) token IDs → logits: (batch, vocab_size)."""
+        emb = self.embedding(x)  # (batch, window_size, embed_dim)
+        emb = emb.view(x.shape[0], -1)  # (batch, window_size * embed_dim): concatenate the window
         h = torch.relu(self.hidden(emb))  # (batch, hidden)
         return self.output(h)  # (batch, vocab_size), unnormalized scores
 
@@ -103,7 +103,7 @@ def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
     """Repeatedly sample the next token from the model's distribution and append it."""
     out = list(prompt)
     for _ in range(n):
-        x = torch.tensor([out[-model.context :]], device=device)
+        x = torch.tensor([out[-model.window_size :]], device=device)
         probs = F.softmax(model(x)[0], dim=-1).cpu()
         out.append(int(torch.multinomial(probs, 1).item()))
     return out
@@ -112,7 +112,7 @@ def generate(model, prompt: list[int], n: int, device: str) -> list[int]:
 def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> MLP:
     """Train a fresh model on train_ds, reporting losses on train_ds and val_ds."""
     torch.manual_seed(args.seed)  # repeatable weight init (and sampling afterwards)
-    model = MLP(vocab_size, args.context, args.embed_dim, args.hidden).to(args.device)
+    model = MLP(vocab_size, args.window_size, args.embed_dim, args.hidden).to(args.device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params:,} parameters on {args.device}")
     print(f"random guessing would give loss ln({vocab_size}) = {math.log(vocab_size):.2f}")
@@ -155,10 +155,10 @@ def main():
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=Formatter)
     p.add_argument(
-        "--context",
+        "--window-size",
         type=int,
         default=3,
-        help="number of previous tokens the model sees",
+        help="number of previous tokens the model sees (the context window)",
     )
     p.add_argument(
         "--embed-dim", type=int, default=64, help="size of each token embedding"
@@ -189,10 +189,10 @@ def main():
         f"train: {len(train_ids):,} tokens | val: {len(val_ids):,} tokens | vocab: {vocab_size:,}"
     )
 
-    model = train(Windows(train_ids, args.context), Windows(val_ids, args.context), vocab_size, args)
+    model = train(Windows(train_ids, args.window_size), Windows(val_ids, args.window_size), vocab_size, args)
 
     if args.generate > 0:
-        prompt = val_ids[: args.context].tolist()
+        prompt = val_ids[: args.window_size].tolist()
         sample = generate(model, prompt, args.generate, args.device)
         print("\nprompt:", " ".join(vocab[i] for i in prompt))
         print("sample:", " ".join(vocab[i] for i in sample))

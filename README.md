@@ -195,11 +195,11 @@ Line `n` holds token `n-1`, since IDs are counted from 0. Real LLM pipelines sto
 
 ```sh
 make pretrain                          # 20,000 steps, about 1 minute on an Apple Silicon GPU
-make pretrain ARGS="--steps 5000 --context 5 --hidden 512"
+make pretrain ARGS="--steps 5000 --window-size 5 --hidden 512"
 uv run pretraining/train_mlp.py --help
 ```
 
-The model looks up the embeddings of the previous `--context` tokens (default 3), joins them into one vector, passes it through a ReLU hidden layer, and outputs a score for every token in the vocabulary. Training minimizes cross-entropy with AdamW. Mini-batches come from a PyTorch `DataLoader` over every window in the corpus, shuffled so that each window is used exactly once per **epoch** (one full pass over the data, about 8,000 batches of 256). It prints the loss on train and validation every 1,000 steps (measured on the same batches each time, so the numbers are comparable), then a summary of the final losses, and samples some text at the end. The weights aren't saved, since nothing loads them yet:
+The model looks up the embeddings of the previous `--window-size` tokens (default 3), joins them into one vector, passes it through a ReLU hidden layer, and outputs a score for every token in the vocabulary. Training minimizes cross-entropy with AdamW. Mini-batches come from a PyTorch `DataLoader` over every window in the corpus, shuffled so that each window is used exactly once per **epoch** (one full pass over the data, about 8,000 batches of 256). It prints the loss on train and validation every 1,000 steps (measured on the same batches each time, so the numbers are comparable), then a summary of the final losses, and samples some text at the end. The weights aren't saved, since nothing loads them yet:
 
 ```text
 model: 3,259,408 parameters on mps
