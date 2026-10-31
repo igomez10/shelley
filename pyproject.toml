@@ -1,0 +1,9 @@
+[project]
+name = "shelley"
+version = "0.1.0"
+description = "PyTorch reference models for shelley"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=2.0",
+    "torch>=2.5",
+]

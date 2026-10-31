@@ -8,6 +8,8 @@ shelley is an LLM built from scratch in Go, for learning. The author wants to un
 
 Module: `github.com/igomez10/shelley`. Go 1.24. Dependencies: `urfave/cli/v3`, `golang.org/x/sync/errgroup`.
 
+The repo root is also a uv project (`pyproject.toml`, `uv.lock`; Python 3.12, PyTorch, numpy). `pretraining/` holds the PyTorch reference models, written at the author's request. The Go code stays free of ML libraries. Run scripts with `uv run pretraining/<script>.py` from the repo root, since they use paths relative to it.
+
 ## Commands
 
 ```sh
@@ -19,6 +21,7 @@ make tokenizer   # step 2: build data/tokenizer/tokenizer.gob from the train spl
 make tokenize TEXT="the cat sat"   # or FILE=path; hides logs
 make vocab       # step 2: export the vocabulary as token,id,count CSV to data/tokenizer/vocab.csv
 make prepare     # step 3: encode the WikiText-2 train/val splits to data/preparation/{train,val}.txt
+make pretrain    # step 4: train pretraining/train_mlp.py and sample text; saves nothing (ARGS="--steps 5000")
 go test ./pkg/tokenizer -run TestTrie   # a single test
 ```
 

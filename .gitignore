@@ -2,3 +2,5 @@
 data/*
 .DS_Store
 coverage.out
+.venv/
+__pycache__/

@@ -13,6 +13,7 @@ Early. There's a tokenizer and the training dataset it produces.
 | Tokenizer (word-level, trie)  | in progress    |
 | Dataset preparation           | done           |
 | Subword tokenizer (BPE)       | not started    |
+| MLP model (PyTorch reference) | done           |
 | Embeddings                    | not started    |
 | Self-attention                | not started    |
 | Transformer block             | not started    |
@@ -32,6 +33,9 @@ cmd/cli/                    CLI entry point (urfave/cli v3)
   commands/prepare/         `shelley prepare`: encode a corpus into a training dataset
 pkg/tokenizer/              tokenizer + trie
 pkg/dataset/                dataset file format + training examples and batches
+pretraining/                PyTorch reference models
+  train_mlp.py              MLP language model trained on data/preparation
+pyproject.toml, uv.lock     Python dependencies (uv project at the repo root)
 ```
 
 ### Tokenizer
@@ -185,6 +189,36 @@ Line `n` holds token `n-1`, since IDs are counted from 0. Real LLM pipelines sto
 - **`Example(start, contextLen)`** returns a **context window** of `contextLen` tokens and its **targets**, which are the same window shifted one token ahead. Each position is one prediction: after `=` comes `Valkyria`, after `= Valkyria` comes `Chronicles`, and so on, so one window holds `contextLen` training examples.
 - **`Batch(rng, batchSize, contextLen)`** returns `batchSize` windows starting at random positions, the input to one training step. Pass a seeded `rand.Rand` to get the same batches every run.
 
+### Training the MLP model (PyTorch)
+
+`pretraining/train_mlp.py` trains the MLP language model from Bengio et al. (2003) on the prepared data. It's a reference implementation in PyTorch, to compare against when the same model is written by hand in Go. It needs [uv](https://docs.astral.sh/uv/), which installs Python 3.12 and PyTorch into `.venv` at the repo root on the first run.
+
+```sh
+make pretrain                          # 20,000 steps, about 1 minute on an Apple Silicon GPU
+make pretrain ARGS="--steps 5000 --context 5 --hidden 512"
+uv run pretraining/train_mlp.py --help
+```
+
+The model looks up the embeddings of the previous `--context` tokens (default 3), joins them into one vector, passes it through a ReLU hidden layer, and outputs a score for every token in the vocabulary. Training minimizes cross-entropy with AdamW. Mini-batches come from a PyTorch `DataLoader` over every window in the corpus, shuffled so that each window is used exactly once per **epoch** (one full pass over the data, about 8,000 batches of 256). It prints the loss on train and validation every 1,000 steps (measured on the same batches each time, so the numbers are comparable), then a summary of the final losses, and samples some text at the end. The weights aren't saved, since nothing loads them yet:
+
+```text
+model: 3,259,408 parameters on mps
+random guessing would give loss ln(10000) = 9.21
+one epoch = 8,016 batches of 256
+step      0 | epoch 0.00 | train 9.221 | val 9.210 | 0s
+step  10000 | epoch 1.25 | train 4.818 | val 5.052 | 26s
+step  20000 | epoch 2.50 | train 4.520 | val 5.073 | 52s
+```
+
+For reference, on the validation split:
+
+| Model                                  | Validation loss |
+| -------------------------------------- | --------------- |
+| uniform guess                          | 9.21            |
+| unigram (overall word frequency)       | 6.19            |
+| bigram by counting (previous word)     | 5.29            |
+| MLP, context 3 (this script, ReLU)     | ~5.07           |
+
 ### Make targets
 
 Run `make` to see them all. The main ones:
@@ -199,6 +233,7 @@ make tokenizer CORPUS=other.txt TOKENIZER=/tmp/other.gob
 make tokenize TEXT="the cat sat"   # or FILE=path; TOKENIZER= also works
 make vocab       # export the vocabulary to data/tokenizer/vocab.csv
 make prepare     # encode train/val splits into data/preparation/
+make pretrain    # train the PyTorch MLP model and sample text
 make clean
 ```
 

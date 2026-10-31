@@ -31,7 +31,7 @@ FILE ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare clean clean-data
+.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare pretrain clean clean-data
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -88,8 +88,11 @@ prepare: build $(WIKITEXT_TRAIN) $(WIKITEXT_VALID) ## step 3: encode the train a
 	@./$(BINARY) prepare --tokenizer $(TOKENIZER) --output $(TRAIN_TXT) < $(WIKITEXT_TRAIN) 2>/dev/null
 	@./$(BINARY) prepare --tokenizer $(TOKENIZER) --output $(VAL_TXT) < $(WIKITEXT_VALID) 2>/dev/null
 
+pretrain: ## step 4: train the PyTorch MLP model, print losses, a summary and sample text (ARGS="--steps 5000")
+	uv run pretraining/train_mlp.py $(ARGS)
+
 clean: ## remove build and coverage output
 	rm -f $(BINARY) coverage.out
 
-clean-data: ## remove everything under data/raw, data/tokenizer and data/preparation
+clean-data: ## remove everything under data/raw, data/tokenizer, data/preparation
 	rm -rf $(RAW_DIR) $(TOKENIZER_DIR) $(PREPARATION_DIR)
