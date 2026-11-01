@@ -251,7 +251,7 @@ prompt: the history of the
 output: the history of the series . about <unk> of the family members . While this eyes response came and <unk> ...
 ```
 
-The prompt is split on whitespace and looked up in the vocabulary saved inside the checkpoint, like `./cli tokenize`; unknown words become `<unk>`. Saving the vocabulary with the model means a rebuilt tokenizer can't make an old model decode its IDs into the wrong words. A checkpoint saved before this change is rejected with a message to retrain. A prompt shorter than the window is padded with `<unk>` at the start. Output is different every run unless you pass `--seed`. If there's no trained model yet, it tells you to run `make pretrain`.
+The prompt is split on whitespace and looked up in the vocabulary saved inside the checkpoint, like `./cli tokenize`; unknown words become `<unk>`. Saving the vocabulary with the model means a rebuilt tokenizer can't make an old model decode its IDs into the wrong words. A checkpoint saved before this change is rejected with a message to retrain. A prompt shorter than the window is padded at the start with the end of a short sample story and one `<|endoftext|>`, the same pattern the model saw between training stories (a run of one repeated token is a window it never saw, and its output on it is garbage). Special tokens are never sampled: they never appear in the training data, so their embeddings are untrained. Output is different every run unless you pass `--seed`. If there's no trained model yet, it tells you to run `make pretrain`.
 
 ### Word similarity
 

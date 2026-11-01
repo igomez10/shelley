@@ -27,6 +27,14 @@ from train_mlp import CHECKPOINT, MLP, load_checkpoint
 UNK_ID = 0  # <unk>; IDs 0-3 are the special tokens (see pkg/tokenizer)
 END_OF_STORY = "<|endoftext|>"  # TinyStories' story separator, an ordinary token
 NUM_SPECIAL = 4
+# A finished story to fill the window in front of a short prompt, followed by one
+# <|endoftext|>, so the model sees the same pattern as between training stories.
+FILLER = (
+    "Once upon a time , there was a little dog named Max . Max liked to play in the park "
+    "with his friend Sam . One day , they found a big red ball under a tree . They played "
+    "with the ball all day . When the sun went down , Max and Sam went home . They were "
+    "tired but happy . The end ."
+)
 
 
 def encode(text: str, vocab: list[str]) -> list[int]:
@@ -41,7 +49,11 @@ def generate(model: MLP, prompt: list[int], n: int, device: str) -> list[int]:
     out = list(prompt)
     for _ in range(n):
         x = torch.tensor([out[-model.window_size :]], device=device)
-        probs = F.softmax(model(x)[0], dim=-1).cpu()
+        logits = model(x)[0]
+        # Special tokens never appear in the training data, so their embeddings are
+        # untrained; sampling one would feed noise back into the window.
+        logits[:NUM_SPECIAL] = float("-inf")
+        probs = F.softmax(logits, dim=-1).cpu()
         out.append(int(torch.multinomial(probs, 1).item()))
     return out
 
@@ -74,13 +86,16 @@ def main():
 
     prompt = encode(args.prompt, vocab)
     # The model always reads exactly window_size tokens, so a shorter prompt is padded
-    # on the left. In training, <|endoftext|> is followed by the start of a new story,
-    # so it tells the model "nothing came before this". Training never saw <unk> runs.
+    # on the left. Repeating one token (34 x <|endoftext|>) is a window training never
+    # saw, and the model's output on it is garbage. Instead, pad with the end of a
+    # finished story and one <|endoftext|>, which in training is followed by a new story.
     padding = max(0, model.window_size - len(prompt))
-    pad_id = vocab.index(END_OF_STORY) if END_OF_STORY in vocab else UNK_ID
-    out = generate(model, [pad_id] * padding + prompt, args.tokens, args.device)[padding:]
+    filler = encode(FILLER, vocab) + ([vocab.index(END_OF_STORY)] if END_OF_STORY in vocab else [])
+    filler = filler * (padding // len(filler) + 1)  # repeat until long enough
+    filler = filler[len(filler) - padding :]  # keep the last `padding` tokens
+    out = generate(model, filler + prompt, args.tokens, args.device)[padding:]
     if padding:
-        print(f"prompt padded with {padding} x {vocab[pad_id]} to fill the {model.window_size}-token window")
+        print(f"prompt padded with {padding} tokens of a sample story to fill the {model.window_size}-token window")
     print("prompt:", " ".join(vocab[i] for i in prompt))
     print("output:", " ".join(vocab[i] for i in out))
 
