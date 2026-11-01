@@ -25,6 +25,7 @@ from clean_text import split_punctuation
 from train_mlp import CHECKPOINT, MLP, load_checkpoint
 
 UNK_ID = 0  # <unk>; IDs 0-3 are the special tokens (see pkg/tokenizer)
+END_OF_STORY = "<|endoftext|>"  # TinyStories' story separator, an ordinary token
 NUM_SPECIAL = 4
 
 
@@ -72,12 +73,14 @@ def main():
     print(f"model from step {checkpoint['step']:,} (val loss {checkpoint['val_loss']:.3f})")
 
     prompt = encode(args.prompt, vocab)
-    if len(prompt) < model.window_size:
-        # shortcut: pads short prompts with <unk>, which training only saw where words
-        # were unknown; use a prompt of at least window_size words for better output.
-        prompt = [UNK_ID] * (model.window_size - len(prompt)) + prompt
-
-    out = generate(model, prompt, args.tokens, args.device)
+    # The model always reads exactly window_size tokens, so a shorter prompt is padded
+    # on the left. In training, <|endoftext|> is followed by the start of a new story,
+    # so it tells the model "nothing came before this". Training never saw <unk> runs.
+    padding = max(0, model.window_size - len(prompt))
+    pad_id = vocab.index(END_OF_STORY) if END_OF_STORY in vocab else UNK_ID
+    out = generate(model, [pad_id] * padding + prompt, args.tokens, args.device)[padding:]
+    if padding:
+        print(f"prompt padded with {padding} x {vocab[pad_id]} to fill the {model.window_size}-token window")
     print("prompt:", " ".join(vocab[i] for i in prompt))
     print("output:", " ".join(vocab[i] for i in out))
 

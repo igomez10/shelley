@@ -55,7 +55,9 @@ def load_ids(path: Path) -> torch.Tensor:
         text = np.append(text, np.uint8(ord("\n")))
     is_digit = (text >= ord("0")) & (text <= ord("9"))
     if not (is_digit | (text == ord("\n"))).all():
-        raise ValueError(f"{path}: expected only digits and newlines, one token ID per line")
+        raise ValueError(
+            f"{path}: expected only digits and newlines, one token ID per line"
+        )
 
     ends = np.flatnonzero(text == ord("\n"))  # where each line ends
     starts = np.concatenate(([0], ends[:-1] + 1))
@@ -109,7 +111,9 @@ class MLP(torch.nn.Module):
         self.window_size = window_size
         # One learned vector per token. Starts random; meaning comes from training.
         self.word_embedding = torch.nn.Embedding(vocab_size, embed_dim)
-        self.hidden_layer = torch.nn.Linear(window_size * embed_dim, hidden)
+        self.hidden_layer_1 = torch.nn.Linear(window_size * embed_dim, hidden)
+        self.hidden_layer_2 = torch.nn.Linear(hidden, hidden)
+        self.hidden_layer_3 = torch.nn.Linear(hidden, hidden)
         self.output_layer = torch.nn.Linear(hidden, vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
@@ -119,7 +123,13 @@ class MLP(torch.nn.Module):
             x.shape[0], -1
         )  # (batch, window_size * embed_dim): concatenate the window
         hidden_output = torch.relu(
-            self.hidden_layer(embedded_tokens)
+            self.hidden_layer_1(embedded_tokens)
+        )  # (batch, hidden)
+        hidden_output = torch.relu(
+            self.hidden_layer_2(hidden_output)
+        )  # (batch, hidden)
+        hidden_output = torch.relu(
+            self.hidden_layer_3(hidden_output)
         )  # (batch, hidden)
         return self.output_layer(
             hidden_output
@@ -151,7 +161,9 @@ def load_checkpoint(path: Path, device: str) -> tuple[MLP, list[str], dict]:
         sys.exit(f"no trained model at {path}; run `make pretrain` first")
     checkpoint = torch.load(path, map_location=device)
     if "vocab" not in checkpoint:
-        sys.exit(f"{path} was saved before checkpoints included the vocabulary; run `make pretrain` again")
+        sys.exit(
+            f"{path} was saved before checkpoints included the vocabulary; run `make pretrain` again"
+        )
     model = MLP(**checkpoint["config"]).to(device)
     model.load_state_dict(checkpoint["model"])
     return model, checkpoint["vocab"], checkpoint
@@ -215,11 +227,28 @@ def train(train_ds: Windows, val_ds: Windows, vocab: list[str], args) -> None:
                 f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | gap {val_loss - train_loss:.3f} | {time.time() - start:.0f}s | {note}"
             )
             if args.patience and checks_without_improvement >= args.patience:
-                # Train kept falling while val didn't: the model is memorizing training windows.
-                print(f"\noverfitting since step {best_step:,} (epoch {best_step / len(loader):.2f}):")
-                print(f"  train {best_train:.3f} -> {train_loss:.3f} (still learning the training text)")
-                print(f"  val   {best_val:.3f} -> {val_loss:.3f} (no longer improving on new text)")
-                print(f"early stopping: no new best val loss in {args.patience} checks ({args.patience * args.eval_interval:,} steps)")
+                print(
+                    f"\nsince the best val loss at step {best_step:,} (epoch {best_step / len(loader):.2f}):"
+                )
+                print(f"  train {best_train:.3f} -> {train_loss:.3f}")
+                print(f"  val   {best_val:.3f} -> {val_loss:.3f}")
+                gap_growth = (val_loss - train_loss) - (best_val - best_train)
+                # Overfitting: train keeps improving while val falls behind, so the gap widens.
+                # A plateau: both have flattened and the gap barely moves (eval noise is ~0.01).
+                if gap_growth > 0.05:
+                    print(
+                        f"  the gap widened by {gap_growth:.3f}: overfitting (memorizing the training text)"
+                    )
+                else:
+                    print(
+                        f"  the gap moved by {gap_growth:+.3f}: a plateau, not overfitting; train and val"
+                    )
+                    print(
+                        "  flattened together (more --patience, a bigger model or learning-rate decay may help)"
+                    )
+                print(
+                    f"early stopping: no new best val loss in {args.patience} checks ({args.patience * args.eval_interval:,} steps)"
+                )
                 break
         if step == args.steps:
             break
@@ -237,7 +266,9 @@ def train(train_ds: Windows, val_ds: Windows, vocab: list[str], args) -> None:
     print(
         f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower"
     )
-    print(f"  best val loss {best_val:.3f} at step {best_step:,}, saved to {args.checkpoint}")
+    print(
+        f"  best val loss {best_val:.3f} at step {best_step:,}, saved to {args.checkpoint}"
+    )
 
 
 def main():
