@@ -16,12 +16,12 @@ The repo root is also a uv project (`pyproject.toml`, `uv.lock`; Python 3.12, Py
 make build       # build the CLI (binary `cli` is gitignored)
 make test        # all tests
 make check       # gofmt check + go vet + tests with -race; run before committing
-make data        # step 1: download WikiText-2 into data/raw/
+make data        # step 1: download every source in DATASETS (default: tinystories wikitext103, ~2.7 GB) into data/raw/<source>/
 make tokenizer   # step 2: build data/tokenizer/tokenizer.gob from the train split (override CORPUS=, TOKENIZER=, VOCAB_SIZE=; default 10000)
 make tokenize TEXT="the cat sat"   # or FILE=path; hides logs
 make vocab       # step 2: export the vocabulary as token,id,count CSV to data/tokenizer/vocab.csv
-make prepare     # step 3: encode the WikiText-2 train/val splits to data/preparation/{train,val}.txt
-make pretrain    # step 4: train pretraining/train_mlp.py, saves the lowest-val-loss model to data/training/mlp.pt (ARGS="--steps 5000")
+make prepare     # step 3: encode the train/val splits to data/preparation/{train,val}.txt
+make pretrain    # step 4: train pretraining/train_mlp.py, saves the lowest-val-loss model to data/training/mlp.pt and stops early after --patience (default 3) checks without improvement; every run overwrites the checkpoint, so pass --checkpoint for test runs (ARGS="--steps 5000")
 make generate PROMPT="the history of"   # step 5: pretraining/generate.py samples text from data/training/mlp.pt
 go test ./pkg/tokenizer -run TestTrie   # a single test
 ```
@@ -41,6 +41,8 @@ Run `make` to list all targets.
 - IDs 0–3 are special tokens (`UnkID`, `BosID`, `EosID`, `PadID`), then the sorted, deduplicated corpus words. Special tokens are not inserted into the trie. `Counts[id]` is how many times the token appeared in the corpus. `Init(corpus, vocabSize, out)` keeps the `vocabSize` most frequent tokens (special tokens included, 0 = no limit); the dropped words are added to `Counts[UnkID]`, the other special tokens stay 0. `NewFromFile` rejects files saved before special tokens or counts existed.
 
 ## Data layout
+
+`DATASETS` (Makefile) lists the sources; their train files are `cat`-ed into one corpus for `init`/`prepare` and their valid files into one validation set. A source is a download rule plus `<name>_TRAIN`/`<name>_VALID` variables. `wikitext` and `wikitext103` overlap (same valid/test, train-2 ⊂ train-103), so never list both. `pretraining/clean_text.py` cleans TinyStories on download (plain quotes, spaces around punctuation) and `generate.py` reuses its `split_punctuation` for prompts. The default mix is ~626M tokens: every step loads it all into memory, so keep loading code vectorized (e.g. `np.fromfile` in `load_ids`) and avoid per-check work over the whole dataset.
 
 `data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt), `training/` (mlp.pt: weights + the config needed to rebuild the model). `generate.py` imports `MLP` and paths from `train_mlp.py`, so model changes in one apply to both. New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
 

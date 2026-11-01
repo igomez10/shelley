@@ -28,9 +28,10 @@ import math
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 DATA = Path("data")
 TRAIN_TXT = DATA / "preparation" / "train.txt"
@@ -40,10 +41,33 @@ CHECKPOINT = DATA / "training" / "mlp.pt"
 
 
 def load_ids(path: Path) -> torch.Tensor:
-    """Read a dataset file (one token ID per line) into a 1-D tensor."""
-    with path.open() as f:
-        ids = [int(line) for line in f if line.strip()]
-    return torch.tensor(ids, dtype=torch.long)
+    """Read a dataset file (one token ID per line) into a 1-D tensor.
+
+    Parses the digits with whole-array numpy operations, about 15 s for the 626M
+    lines of the default mix. A Python loop, or np.fromfile(sep="\\n"), which keeps
+    growing its buffer, takes many minutes at that size.
+    """
+    text = np.fromfile(path, dtype=np.uint8)
+    if text.size == 0:
+        return torch.zeros(0, dtype=torch.long)
+    if text[-1] != ord("\n"):
+        text = np.append(text, np.uint8(ord("\n")))
+    is_digit = (text >= ord("0")) & (text <= ord("9"))
+    if not (is_digit | (text == ord("\n"))).all():
+        raise ValueError(f"{path}: expected only digits and newlines, one token ID per line")
+
+    ends = np.flatnonzero(text == ord("\n"))  # where each line ends
+    starts = np.concatenate(([0], ends[:-1] + 1))
+    lengths = ends - starts  # digits per line
+    if (lengths == 0).any():
+        raise ValueError(f"{path}: blank line; expected one token ID per line")
+
+    # Build every number at once, one digit position per pass: "467" -> 4, 46, 467.
+    ids = np.zeros(len(ends), dtype=np.int64)
+    for k in range(int(lengths.max())):
+        longer = lengths > k
+        ids[longer] = ids[longer] * 10 + (text[starts[longer] + k] - ord("0"))
+    return torch.from_numpy(ids)
 
 
 def load_vocab(path: Path) -> list[str]:
@@ -101,11 +125,17 @@ class MLP(torch.nn.Module):
         )  # (batch, vocab_size), unnormalized scores
 
 
-def estimate_loss(model, dataset: Dataset, args) -> float:
+def estimate_loss(model, dataset: Windows, args) -> float:
     """Average loss over the same random batches every call, without updating weights."""
-    loader = make_loader(
-        dataset, args, seed=0
-    )  # same seed, same batches, so changes are real
+    # Draw only the windows needed, instead of shuffling the whole dataset each check.
+    # Same seed every call, so the batches are the same and changes are real.
+    sampler = RandomSampler(
+        dataset,
+        replacement=True,
+        num_samples=args.eval_batches * args.batch_size,
+        generator=torch.Generator().manual_seed(0),
+    )
+    loader = DataLoader(dataset, batch_size=args.batch_size, sampler=sampler)
     losses = []
     for (x, y), _ in zip(loader, range(args.eval_batches)):
         losses.append(
@@ -114,10 +144,11 @@ def estimate_loss(model, dataset: Dataset, args) -> float:
     return sum(losses) / len(losses)
 
 
-def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> None:
+def train(train_ds: Windows, val_ds: Windows, vocab_size: int, args) -> None:
     """Train a fresh model on train_ds, reporting losses on train_ds and val_ds.
 
-    Saves a checkpoint each time the validation loss reaches a new low.
+    Saves a checkpoint each time the validation loss reaches a new low, and stops
+    early once it hasn't improved for `args.patience` loss checks in a row.
     """
     torch.manual_seed(args.seed)  # repeatable weight init
     config = {
@@ -140,22 +171,35 @@ def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> None:
     train_batches = (batch for _ in itertools.count() for batch in loader)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     start = time.time()
-    best_val, best_step = math.inf, 0
+    best_val, best_step, best_train = math.inf, 0, math.inf
+    checks_without_improvement = 0
     for step in range(args.steps + 1):
         if step % args.eval_interval == 0 or step == args.steps:
             train_loss = estimate_loss(model, train_ds, args)
             val_loss = estimate_loss(model, val_ds, args)
-            saved = ""
             if val_loss < best_val:
-                best_val, best_step = val_loss, step
+                best_val, best_step, best_train = val_loss, step, train_loss
+                checks_without_improvement = 0
                 # The config is saved too, so generate.py can rebuild the same model.
                 checkpoint = {"model": model.state_dict(), "config": config, "step": step, "val_loss": val_loss}
                 args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(checkpoint, args.checkpoint)
-                saved = " | saved"
+                note = "saved"
+            else:
+                checks_without_improvement += 1
+                # One worse check can be noise; several in a row means overfitting.
+                note = f"no improvement {checks_without_improvement}/{args.patience or '-'}"
+            # gap = val - train; it widens as the model fits the training text more than new text.
             print(
-                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | {time.time() - start:.0f}s{saved}"
+                f"step {step:>6} | epoch {step / len(loader):.2f} | train {train_loss:.3f} | val {val_loss:.3f} | gap {val_loss - train_loss:.3f} | {time.time() - start:.0f}s | {note}"
             )
+            if args.patience and checks_without_improvement >= args.patience:
+                # Train kept falling while val didn't: the model is memorizing training windows.
+                print(f"\noverfitting since step {best_step:,} (epoch {best_step / len(loader):.2f}):")
+                print(f"  train {best_train:.3f} -> {train_loss:.3f} (still learning the training text)")
+                print(f"  val   {best_val:.3f} -> {val_loss:.3f} (no longer improving on new text)")
+                print(f"early stopping: no new best val loss in {args.patience} checks ({args.patience * args.eval_interval:,} steps)")
+                break
         if step == args.steps:
             break
 
@@ -167,7 +211,7 @@ def train(train_ds: Dataset, val_ds: Dataset, vocab_size: int, args) -> None:
         loss.backward()  # backpropagation: gradient of the loss for every parameter
         optimizer.step()  # gradient descent: move each parameter against its gradient
 
-    print(f"\nresult after {args.steps:,} steps ({time.time() - start:.0f}s):")
+    print(f"\nresult after {step:,} steps ({time.time() - start:.0f}s):")
     print(f"  train loss {train_loss:.3f} | val loss {val_loss:.3f}")
     print(
         f"  random guessing {math.log(vocab_size):.3f}, so val is {math.log(vocab_size) - val_loss:.2f} lower"
@@ -206,6 +250,12 @@ def main():
         type=int,
         default=50,
         help="batches averaged for each loss report",
+    )
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=3,
+        help="stop after this many loss checks in a row without a new best val loss (0 = never stop early)",
     )
     p.add_argument(
         "--checkpoint",

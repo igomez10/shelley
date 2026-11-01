@@ -82,7 +82,7 @@ All commands read and write the tokenizer at `data/tokenizer/tokenizer.gob` by d
 1. Download a corpus and build the vocabulary from it (only needed once):
 
    ```sh
-   make data        # WikiText-2 → data/raw/
+   make data        # TinyStories + WikiText-103 → data/raw/ (see DATASETS)
    make tokenizer   # builds ./cli and saves a 10,000-token data/tokenizer/tokenizer.gob
    ```
 
@@ -205,15 +205,26 @@ The model looks up the embeddings of the previous `--window-size` tokens (defaul
 model: 3,259,408 parameters on mps
 random guessing would give loss ln(10000) = 9.21
 one epoch = 8,016 batches of 256
-step      0 | epoch 0.00 | train 9.221 | val 9.210 | 0s | saved
-step  16000 | epoch 2.00 | train 4.637 | val 5.002 | 37s | saved
-step  17000 | epoch 2.12 | train 4.591 | val 5.056 | 40s
-step  20000 | epoch 2.50 | train 4.526 | val 5.070 | 46s
+step      0 | epoch 0.00 | train 9.221 | val 9.210 | gap -0.011 | 0s | saved
+step  16000 | epoch 2.00 | train 4.635 | val 5.009 | gap 0.374 | 38s | saved
+step  17000 | epoch 2.12 | train 4.593 | val 5.057 | gap 0.464 | 40s | no improvement 1/3
+step  18000 | epoch 2.25 | train 4.567 | val 5.075 | gap 0.508 | 42s | no improvement 2/3
+step  19000 | epoch 2.37 | train 4.540 | val 5.076 | gap 0.536 | 45s | no improvement 3/3
 
-result after 20,000 steps (46s):
-  train loss 4.526 | val loss 5.070
-  best val loss 5.002 at step 16,000, saved to data/training/mlp.pt
+overfitting since step 16,000 (epoch 2.00):
+  train 4.635 -> 4.540 (still learning the training text)
+  val   5.009 -> 5.076 (no longer improving on new text)
+early stopping: no new best val loss in 3 checks (3,000 steps)
+
+result after 19,000 steps (45s):
+  train loss 4.540 | val loss 5.076
+  random guessing 9.210, so val is 4.13 lower
+  best val loss 5.009 at step 16,000, saved to data/training/mlp.pt
 ```
+
+**Early stopping:** training stops once the validation loss hasn't set a new best for `--patience` checks in a row (default 3, so 3,000 steps). `gap` is val minus train. It grows as the model fits the training text better than new text, and when train keeps falling while val stops improving, the model is **overfitting**: memorizing training windows instead of learning patterns that carry over. One worse check alone can be noise, which is why it waits for several. `--patience 0` turns early stopping off.
+
+Each run replaces `data/training/mlp.pt` with its own best model, so a short test run overwrites a better model from an earlier run. Use `--checkpoint /tmp/test.pt` for experiments.
 
 For reference, on the validation split:
 
@@ -222,7 +233,7 @@ For reference, on the validation split:
 | uniform guess                          | 9.21            |
 | unigram (overall word frequency)       | 6.19            |
 | bigram by counting (previous word)     | 5.29            |
-| MLP, window 3 (this script, ReLU)      | ~5.00 (best)    |
+| MLP, window 3 (this script, ReLU)      | ~5.01 (best)    |
 
 ### Generating text
 
@@ -235,7 +246,7 @@ uv run pretraining/generate.py --help
 ```
 
 ```text
-model from step 16,000 (val loss 5.002)
+model from step 16,000 (val loss 5.005)
 prompt: the history of the
 output: the history of the series . about <unk> of the family members . While this eyes response came and <unk> ...
 ```
@@ -250,7 +261,7 @@ Run `make` to see them all. The main ones:
 make build       # build ./cli
 make test        # run tests
 make check       # gofmt check, go vet, tests with the race detector
-make tokenizer   # build a 10,000-token tokenizer from the WikiText-2 train split
+make tokenizer   # build a 10,000-token tokenizer from the train split
 make tokenizer VOCAB_SIZE=0        # no limit: keep every word
 make tokenizer CORPUS=other.txt TOKENIZER=/tmp/other.gob
 make tokenize TEXT="the cat sat"   # or FILE=path; TOKENIZER= also works
@@ -267,8 +278,10 @@ Everything generated lives in `data/`, which git ignores. It has one folder per 
 
 ```text
 data/
-  raw/            1. make data       downloaded corpus
-    wikitext-2-raw/wiki.{train,valid,test}.raw
+  raw/            1. make data       downloaded corpora, one folder per source
+    tinystories/{train,valid}.txt                cleaned on download
+    wikitext-103-raw/wiki.{train,valid,test}.raw
+    wikitext-2-raw/wiki.{train,valid,test}.raw   only with DATASETS=... wikitext
   tokenizer/      2. make tokenizer  tokenizer built from the train split
     tokenizer.gob
     vocab.csv        make vocab      the vocabulary as token,id,count
@@ -279,6 +292,22 @@ data/
     mlp.pt
 ```
 
-The corpus is [WikiText-2](https://wikitext.smerity.com/) (raw), about 11 MB of English Wikipedia articles already split into train, validation and test. Only the train split is used to build the tokenizer, and the test split is never encoded, so it stays untouched for a final evaluation.
+The pipeline trains on several sources at once. `DATASETS` in the Makefile lists them (default `tinystories wikitext103`). Their train files are concatenated into one corpus for `make tokenizer` and `make prepare`, and their validation files into one validation set:
+
+| Source | Train words | Share | Unknown words in its validation text (10k vocabulary) |
+| ------ | ----------- | ----- | ---------------------------------------------------- |
+| `tinystories` | 525M | 84% | 0.4% |
+| `wikitext103` | 101M | 16% | 12.4% |
+| `wikitext` (WikiText-2, not in the default) | 2M | | |
+
+The mix matters. With `tinystories wikitext` (WikiText-2), Wikipedia was only 0.4% of the text: the shared 10,000-token vocabulary was almost all TinyStories words, and 21% of Wikipedia validation words became `<unk>`. WikiText-103 has the same kind of articles, 50 times more of them. Use either `wikitext` or `wikitext103`, not both: WikiText-2's train articles are a subset of WikiText-103's, and their validation and test files are identical. The combined validation set is still 96% TinyStories, so its loss mostly measures TinyStories.
+
+To add a source, write a Makefile rule that downloads it into `data/raw/<name>/`, define `<name>_TRAIN` and `<name>_VALID`, and add the name to `DATASETS`. Changing `DATASETS` means rerunning `make tokenizer vocab prepare pretrain`.
+
+[TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) (V2, the GPT-4-written stories): about 2.2 GB of short children's stories in simple, modern English, with a separate validation file. Stories are separated by a `<|endoftext|>` line, which stays in the text as an ordinary token so the model learns where a story ends. `make data` cleans the text while downloading (`pretraining/clean_text.py`): curly quotes become plain ones, and punctuation gets spaces around it, so `said,` becomes `said ,` and the word-level tokenizer doesn't learn `said`, `said,` and `said.` as separate words. `generate.py` cleans prompts the same way.
+
+[WikiText-103](https://wikitext.smerity.com/) (raw) is about 540 MB of English Wikipedia articles, already split into train, validation and test, with punctuation already separated by spaces.
+
+The combined corpus is big for this pipeline: about 626M tokens, and every step loads the whole corpus into memory (about 36 GB at peak). Building the tokenizer, vocabulary and prepared data takes about 1.5 minutes, plus a few minutes to download. One epoch is about 2.4 million training steps, so the default `make pretrain` (20,000 steps) sees under 1% of the data. Pass a larger `--steps` to use more. Only the train files build the tokenizer, and the test files are never encoded, so they stay untouched for a final evaluation.
 
 If you rebuild the tokenizer, for example with a different `VOCAB_SIZE`, run `make vocab` and `make prepare` again: the token IDs in later steps depend on it. `make clean-data` deletes all four folders.

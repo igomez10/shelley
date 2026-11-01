@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from clean_text import split_punctuation
 from train_mlp import CHECKPOINT, MLP, VOCAB_CSV, load_vocab
 
 UNK_ID = 0  # <unk>; IDs 0-3 are the special tokens (see pkg/tokenizer)
@@ -29,10 +30,10 @@ NUM_SPECIAL = 4
 
 
 def encode(text: str, vocab: list[str]) -> list[int]:
-    """Split on whitespace and look up each word, like the Go tokenizer's Encode."""
+    """Separate punctuation like the training text, then look up each word like the Go tokenizer's Encode."""
     # Special tokens are left out, so typing "<eos>" gives <unk>, as in Go.
     ids = {token: i for i, token in enumerate(vocab) if i >= NUM_SPECIAL}
-    return [ids.get(word, UNK_ID) for word in text.split()]
+    return [ids.get(word, UNK_ID) for word in split_punctuation(text).split()]
 
 
 def generate(model: MLP, prompt: list[int], n: int, device: str) -> list[int]:
