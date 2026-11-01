@@ -63,11 +63,13 @@ export TEXT
 # Prompt for `make generate`, e.g. make generate PROMPT="the history of".
 # Exported for the same reason as TEXT.
 export PROMPT
+# Words for `make similar`, e.g. make similar WORDS="king happy dog".
+WORDS ?= king happy dog Monday
 FILE ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare pretrain generate clean clean-data
+.PHONY: help build test test-race cover fmt fmt-check vet check data tokenizer tokenize vocab prepare pretrain generate similar clean clean-data
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -148,6 +150,9 @@ clean: ## remove build and coverage output
 
 generate: ## step 5: generate text with the trained model (PROMPT="the history of", ARGS="--tokens 100")
 	uv run pretraining/generate.py $(if $(PROMPT),--prompt "$$PROMPT") $(ARGS)
+
+similar: ## show the words whose learned embeddings are closest to WORDS (ARGS="--top 5")
+	uv run pretraining/similar.py $(WORDS) $(ARGS)
 
 clean-data: ## remove everything under data/raw, data/tokenizer, data/preparation, data/training
 	rm -rf $(RAW_DIR) $(TOKENIZER_DIR) $(PREPARATION_DIR) data/training

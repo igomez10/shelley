@@ -1,7 +1,7 @@
 """Generate text with the MLP model trained by train_mlp.py.
 
 Loads the checkpoint from data/training/mlp.pt, encodes the prompt with the
-tokenizer's vocabulary, then repeatedly samples the next token from the model's
+vocabulary saved in it, then repeatedly samples the next token from the model's
 probabilities and appends it:
 
     [the history of] → model → p(next) → sample "the" → [history of the] → ...
@@ -16,14 +16,13 @@ Run from the repo root after `make pretrain`:
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
 from clean_text import split_punctuation
-from train_mlp import CHECKPOINT, MLP, VOCAB_CSV, load_vocab
+from train_mlp import CHECKPOINT, MLP, load_checkpoint
 
 UNK_ID = 0  # <unk>; IDs 0-3 are the special tokens (see pkg/tokenizer)
 NUM_SPECIAL = 4
@@ -64,22 +63,12 @@ def main():
     )
     args = p.parse_args()
 
-    if not args.checkpoint.exists():
-        sys.exit(f"no trained model at {args.checkpoint}; run `make pretrain` first")
     if args.seed is not None:
         torch.manual_seed(args.seed)
 
-    checkpoint = torch.load(args.checkpoint, map_location=args.device)
-    config = checkpoint["config"]
-    vocab = load_vocab(VOCAB_CSV)
-    if len(vocab) != config["vocab_size"]:
-        sys.exit(
-            f"the model was trained with {config['vocab_size']:,} tokens but {VOCAB_CSV} has {len(vocab):,}; "
-            "the tokenizer changed, so run `make prepare` and `make pretrain` again"
-        )
-
-    model = MLP(**config).to(args.device)
-    model.load_state_dict(checkpoint["model"])
+    # The checkpoint carries its own vocabulary, so IDs always map back to the words
+    # the model was trained on, even if the tokenizer was rebuilt since.
+    model, vocab, checkpoint = load_checkpoint(args.checkpoint, args.device)
     print(f"model from step {checkpoint['step']:,} (val loss {checkpoint['val_loss']:.3f})")
 
     prompt = encode(args.prompt, vocab)

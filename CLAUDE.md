@@ -23,6 +23,7 @@ make vocab       # step 2: export the vocabulary as token,id,count CSV to data/t
 make prepare     # step 3: encode the train/val splits to data/preparation/{train,val}.txt
 make pretrain    # step 4: train pretraining/train_mlp.py, saves the lowest-val-loss model to data/training/mlp.pt and stops early after --patience (default 3) checks without improvement; every run overwrites the checkpoint, so pass --checkpoint for test runs (ARGS="--steps 5000")
 make generate PROMPT="the history of"   # step 5: pretraining/generate.py samples text from data/training/mlp.pt
+make similar WORDS="dog big"            # pretraining/similar.py: nearest tokens by cosine similarity of embeddings
 go test ./pkg/tokenizer -run TestTrie   # a single test
 ```
 
@@ -44,7 +45,7 @@ Run `make` to list all targets.
 
 `DATASETS` (Makefile) lists the sources; their train files are `cat`-ed into one corpus for `init`/`prepare` and their valid files into one validation set. A source is a download rule plus `<name>_TRAIN`/`<name>_VALID` variables. `wikitext` and `wikitext103` overlap (same valid/test, train-2 ⊂ train-103), so never list both. `pretraining/clean_text.py` cleans TinyStories on download (plain quotes, spaces around punctuation) and `generate.py` reuses its `split_punctuation` for prompts. The default mix is ~626M tokens: every step loads it all into memory, so keep loading code vectorized (e.g. `np.fromfile` in `load_ids`) and avoid per-check work over the whole dataset.
 
-`data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt), `training/` (mlp.pt: weights + the config needed to rebuild the model). `generate.py` imports `MLP` and paths from `train_mlp.py`, so model changes in one apply to both. New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
+`data/` (gitignored) has one folder per pipeline step: `raw/` (downloaded corpus), `tokenizer/` (tokenizer.gob, vocab.csv), `preparation/` (train.txt, val.txt), `training/` (mlp.pt: weights + the config needed to rebuild the model). Checkpoints also store the vocabulary; `generate.py` and `similar.py` load models only through `train_mlp.load_checkpoint`, so IDs always decode with the words the model was trained on. New pipeline steps get their own `data/<step>/` folder, with paths defined at the top of the Makefile.
 
 ## Conventions
 

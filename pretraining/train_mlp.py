@@ -25,6 +25,7 @@ import argparse
 import csv
 import itertools
 import math
+import sys
 import time
 from pathlib import Path
 
@@ -144,13 +145,26 @@ def estimate_loss(model, dataset: Windows, args) -> float:
     return sum(losses) / len(losses)
 
 
-def train(train_ds: Windows, val_ds: Windows, vocab_size: int, args) -> None:
+def load_checkpoint(path: Path, device: str) -> tuple[MLP, list[str], dict]:
+    """Rebuild a trained model from a checkpoint saved by train(), with its vocabulary."""
+    if not path.exists():
+        sys.exit(f"no trained model at {path}; run `make pretrain` first")
+    checkpoint = torch.load(path, map_location=device)
+    if "vocab" not in checkpoint:
+        sys.exit(f"{path} was saved before checkpoints included the vocabulary; run `make pretrain` again")
+    model = MLP(**checkpoint["config"]).to(device)
+    model.load_state_dict(checkpoint["model"])
+    return model, checkpoint["vocab"], checkpoint
+
+
+def train(train_ds: Windows, val_ds: Windows, vocab: list[str], args) -> None:
     """Train a fresh model on train_ds, reporting losses on train_ds and val_ds.
 
     Saves a checkpoint each time the validation loss reaches a new low, and stops
     early once it hasn't improved for `args.patience` loss checks in a row.
     """
     torch.manual_seed(args.seed)  # repeatable weight init
+    vocab_size = len(vocab)
     config = {
         "vocab_size": vocab_size,
         "window_size": args.window_size,
@@ -180,8 +194,15 @@ def train(train_ds: Windows, val_ds: Windows, vocab_size: int, args) -> None:
             if val_loss < best_val:
                 best_val, best_step, best_train = val_loss, step, train_loss
                 checks_without_improvement = 0
-                # The config is saved too, so generate.py can rebuild the same model.
-                checkpoint = {"model": model.state_dict(), "config": config, "step": step, "val_loss": val_loss}
+                # The config and vocabulary are saved too, so generate.py can rebuild the
+                # same model and turn its IDs back into the right words.
+                checkpoint = {
+                    "model": model.state_dict(),
+                    "config": config,
+                    "vocab": vocab,
+                    "step": step,
+                    "val_loss": val_loss,
+                }
                 args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(checkpoint, args.checkpoint)
                 note = "saved"
@@ -285,7 +306,7 @@ def main():
     train(
         Windows(train_ids, args.window_size),
         Windows(val_ids, args.window_size),
-        vocab_size,
+        vocab,
         args,
     )
 

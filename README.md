@@ -251,7 +251,24 @@ prompt: the history of the
 output: the history of the series . about <unk> of the family members . While this eyes response came and <unk> ...
 ```
 
-The prompt is split on whitespace and looked up in `data/tokenizer/vocab.csv`, like `./cli tokenize`; unknown words become `<unk>`. A prompt shorter than the window is padded with `<unk>` at the start. Output is different every run unless you pass `--seed`. If there's no trained model yet, it tells you to run `make pretrain`.
+The prompt is split on whitespace and looked up in the vocabulary saved inside the checkpoint, like `./cli tokenize`; unknown words become `<unk>`. Saving the vocabulary with the model means a rebuilt tokenizer can't make an old model decode its IDs into the wrong words. A checkpoint saved before this change is rejected with a message to retrain. A prompt shorter than the window is padded with `<unk>` at the start. Output is different every run unless you pass `--seed`. If there's no trained model yet, it tells you to run `make pretrain`.
+
+### Word similarity
+
+`pretraining/similar.py` looks up a word's learned embedding and lists the words whose embeddings point in the most similar direction (**cosine similarity**, `a·b / (|a||b|)`, from 1 for the same direction down to 0 for unrelated):
+
+```sh
+make similar                                     # default words: king happy dog Monday
+make similar WORDS="dog big ran" ARGS="--top 5"
+```
+
+```text
+dog:  0.475 cat   0.458 kitten   0.407 Therefore   0.407 owl   0.393 families
+big:  0.469 small   0.461 huge   0.400 commercial   0.400 Bonnie   0.388 tall
+ran:  0.484 danced   0.450 flying   0.447 comes   0.446 crawled   0.426 flew
+```
+
+Nobody tells the model that `dog` and `cat` are related. They end up close because they appear in similar places (`the ___ ran`, `a little ___`), and similar contexts give similar gradients. `small` sits next to `big` for the same reason: opposites fill the same slots in a sentence. Words seen less often, and models trained for fewer steps, give noisier neighbours (the list above is from the default 20,000 steps, under 1% of the data).
 
 ### Make targets
 
@@ -269,6 +286,7 @@ make vocab       # export the vocabulary to data/tokenizer/vocab.csv
 make prepare     # encode train/val splits into data/preparation/
 make pretrain    # train the PyTorch MLP model, save the best one to data/training/mlp.pt
 make generate PROMPT="the history of"   # generate text with the trained model
+make similar WORDS="dog big"            # nearest words by learned embedding
 make clean
 ```
 
